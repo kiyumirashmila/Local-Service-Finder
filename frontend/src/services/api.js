@@ -56,6 +56,8 @@ export const changePassword = (payload) => api.put('/auth/profile/password', pay
 export const deleteMyAccount = () => api.delete('/auth/profile/me');
 
 export const login = (payload) => api.post('/auth/login', payload);
+export const requestForgotPasswordOtp = (payload) => api.post('/auth/forgot-password/request-otp', payload);
+export const resetPasswordWithOtp = (payload) => api.post('/auth/forgot-password/reset', payload);
 
 export const fetchAdminSuppliers = () => api.get('/admin/suppliers');
 

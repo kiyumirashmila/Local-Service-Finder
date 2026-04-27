@@ -4,6 +4,10 @@ const fs = require("fs");
 const cloudinary = require("../config/cloudinary");
 const { signToken } = require("../config/jwt");
 const User = require("../models/User");
+const { sendMail } = require("../utils/mailer");
+
+const RESET_OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const resetOtpStore = new Map(); // key: normalized email -> { otp, expiresAt }
 
 const serializeUser = (userDoc) => {
   const user = userDoc.toObject ? userDoc.toObject() : userDoc;
@@ -698,6 +702,102 @@ const changePassword = async (req, res, next) => {
   }
 };
 
+const requestPasswordResetOtp = async (req, res, next) => {
+  try {
+    const emailRaw = String(req.body?.email || "").trim().toLowerCase();
+    if (!validateEmail(emailRaw)) {
+      return res.status(400).json({ message: "Please provide a valid email." });
+    }
+
+    const user = await User.findOne({ email: emailRaw }).select("_id fullName email");
+    if (!user) {
+      return res.status(404).json({ message: "No account found for this email." });
+    }
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Date.now() + RESET_OTP_TTL_MS;
+    resetOtpStore.set(emailRaw, { otp, expiresAt });
+
+    try {
+      await sendMail({
+        to: user.email,
+        subject: "Your password reset OTP",
+        text: `Hello ${user.fullName || "User"},\n\nYour OTP for password reset is: ${otp}\n\nThis code expires in 10 minutes.\n\nIf you did not request this, please ignore this email.`,
+        html: `
+          <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #0f172a;">
+            <h2 style="margin: 0 0 10px;">Password reset request</h2>
+            <p>Hello ${user.fullName || "User"},</p>
+            <p>Your OTP for password reset is:</p>
+            <p style="font-size: 28px; font-weight: 700; letter-spacing: 4px; color: #1e3a8a; margin: 8px 0 14px;">${otp}</p>
+            <p>This code expires in <b>10 minutes</b>.</p>
+            <p>If you did not request this, you can safely ignore this email.</p>
+          </div>
+        `
+      });
+    } catch (mailErr) {
+      resetOtpStore.delete(emailRaw);
+      return res.status(500).json({ message: "Failed to send OTP email. Please try again later." });
+    }
+
+    return res.status(200).json({ message: "OTP sent to your email." });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const resetPasswordWithOtp = async (req, res, next) => {
+  try {
+    const emailRaw = String(req.body?.email || "").trim().toLowerCase();
+    const otpRaw = String(req.body?.otp || "").trim();
+    const newPassword = req.body?.newPassword;
+    const confirmNewPassword = req.body?.confirmNewPassword;
+
+    if (!validateEmail(emailRaw)) {
+      return res.status(400).json({ message: "Please provide a valid email." });
+    }
+    if (!/^\d{6}$/.test(otpRaw)) {
+      return res.status(400).json({ message: "OTP must be a 6-digit code." });
+    }
+
+    const validationErrors = [
+      validateCustomerField("password", newPassword),
+      validateCustomerField("confirmPassword", confirmNewPassword, { password: newPassword })
+    ].filter(Boolean);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ message: validationErrors[0] });
+    }
+
+    const otpRow = resetOtpStore.get(emailRaw);
+    if (!otpRow) {
+      return res.status(400).json({ message: "OTP not requested. Please request a new OTP." });
+    }
+    if (Date.now() > Number(otpRow.expiresAt || 0)) {
+      resetOtpStore.delete(emailRaw);
+      return res.status(400).json({ message: "OTP has expired. Please request a new OTP." });
+    }
+    if (String(otpRow.otp) !== otpRaw) {
+      return res.status(400).json({ message: "Invalid OTP." });
+    }
+
+    const user = await User.findOne({ email: emailRaw }).select("+passwordHash role");
+    if (!user) {
+      resetOtpStore.delete(emailRaw);
+      return res.status(404).json({ message: "No account found for this email." });
+    }
+    if (user.role === "supplier" && user.supplierApprovalStatus !== "approved") {
+      return res.status(403).json({ message: "Your supplier account is not approved yet." });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+    resetOtpStore.delete(emailRaw);
+
+    return res.status(200).json({ message: "Password reset successful. Please log in." });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   signupCustomer,
   signupSupplier,
@@ -707,6 +807,8 @@ module.exports = {
   updateCustomerProfile,
   updateSupplierProfile,
   deleteMyAccount,
-  changePassword
+  changePassword,
+  requestPasswordResetOtp,
+  resetPasswordWithOtp
 };
 

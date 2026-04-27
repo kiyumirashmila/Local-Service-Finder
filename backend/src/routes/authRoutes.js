@@ -8,7 +8,9 @@ const {
   updateCustomerProfile,
   updateSupplierProfile,
   deleteMyAccount,
-  changePassword
+  changePassword,
+  requestPasswordResetOtp,
+  resetPasswordWithOtp
 } = require("../controllers/authController");
 const { supplierSignupUpload } = require("../middleware/uploadMiddleware");
 const authMiddleware = require("../middleware/authMiddleware");
@@ -36,6 +38,8 @@ router.post(
 
 router.post("/login/customer", loginUser);
 router.post("/login", login);
+router.post("/forgot-password/request-otp", requestPasswordResetOtp);
+router.post("/forgot-password/reset", resetPasswordWithOtp);
 
 router.get("/me", authMiddleware, getMe);
 
