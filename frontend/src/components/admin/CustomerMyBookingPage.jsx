@@ -321,7 +321,7 @@ const CustomerMyBookingsPage = ({
           min-height: 100vh;
           display: flex;
           flex-direction: column;
-          background: #fbf2e8;
+          background: #f1f5f9;
         }
         .customer-bookings-main {
           flex: 1;
@@ -346,17 +346,17 @@ const CustomerMyBookingsPage = ({
           padding: 10px 14px;
           font-weight: 800;
           cursor: pointer;
-          color: #3b2109;
+          color: #1e3a8a;
         }
         .cmb-title {
           margin: 0;
           font-size: 28px;
           font-weight: 900;
-          color: #6b3d12;
+          color: #0f172a;
         }
         .cmb-sub {
           margin: 6px 0 0;
-          color: #9a6a3d;
+          color: #475569;
           font-weight: 700;
           font-size: 13px;
           max-width: 520px;
@@ -389,7 +389,7 @@ const CustomerMyBookingsPage = ({
           width: 48px;
           height: 48px;
           border-radius: 14px;
-          background: linear-gradient(135deg, #f97316, #f59e0b);
+          background: linear-gradient(135deg, #1e3a8a, #3b82f6);
           color: #fff;
           display: flex;
           align-items: center;
@@ -405,12 +405,12 @@ const CustomerMyBookingsPage = ({
         }
         .cmb-provider-name {
           font-weight: 900;
-          color: #3b2109;
+          color: #0f172a;
           font-size: 16px;
         }
         .cmb-provider-meta {
           font-size: 12px;
-          color: #9a6a3d;
+          color: #475569;
           font-weight: 700;
           margin-top: 2px;
         }
@@ -433,12 +433,12 @@ const CustomerMyBookingsPage = ({
           font-weight: 900;
           text-transform: uppercase;
           letter-spacing: 0.05em;
-          color: #9a6a3d;
+          color: #475569;
           margin-bottom: 4px;
         }
         .cmb-v {
           font-weight: 800;
-          color: #3b2109;
+          color: #0f172a;
           font-size: 14px;
         }
         .cmb-empty {
@@ -448,7 +448,7 @@ const CustomerMyBookingsPage = ({
           font-weight: 700;
         }
         .cmb-empty a {
-          color: #a4570a;
+          color: #1e3a8a;
           font-weight: 900;
         }
         .cmb-err {
@@ -473,7 +473,7 @@ const CustomerMyBookingsPage = ({
         }
         .cmb-pay-btn {
           border: none;
-          background: #a4570a;
+          background: #1e3a8a;
           color: #fff;
           padding: 12px 20px;
           border-radius: 999px;
@@ -507,8 +507,8 @@ const CustomerMyBookingsPage = ({
           margin: 2px 0 16px;
           padding: 14px 14px 12px;
           border-radius: 14px;
-          background: #fffbf5;
-          border: 1px solid #f3e8d8;
+          background: #eff6ff;
+          border: 1px solid #dbeafe;
         }
         .cmb-timeline-line {
           position: absolute;
@@ -522,7 +522,7 @@ const CustomerMyBookingsPage = ({
         }
         .cmb-timeline-line-fill {
           height: 100%;
-          background: linear-gradient(90deg, #f59e0b, #22c55e);
+          background: linear-gradient(90deg, #1e3a8a, #16a34a);
           border-radius: 999px;
           transition: width 0.25s ease;
         }
@@ -556,7 +556,7 @@ const CustomerMyBookingsPage = ({
         .cmb-step-label {
           font-size: 11px;
           font-weight: 800;
-          color: #9a6a3d;
+          color: #475569;
         }
         .cmb-step.active .cmb-step-label {
           color: #166534;
@@ -573,7 +573,7 @@ const CustomerMyBookingsPage = ({
         }
         .cmb-review-btn {
           border: none;
-          background: #7c3aed;
+          background: #1e3a8a;
           color: #fff;
           padding: 10px 16px;
           border-radius: 999px;
@@ -689,7 +689,7 @@ const CustomerMyBookingsPage = ({
           cursor: not-allowed;
           opacity: 0.45;
         }
-        .cmb-star-active { color: #f59e0b; }
+        .cmb-star-active { color: #1e3a8a; }
         .cmb-star-inactive { color: #d1d5db; }
         .cmb-review-textarea {
           width: 100%;
@@ -718,7 +718,7 @@ const CustomerMyBookingsPage = ({
         }
         .cmb-review-submit {
           border: none;
-          background: #16a34a;
+          background: #1e3a8a;
           color: #fff;
           padding: 8px 14px;
           border-radius: 999px;
@@ -1001,7 +1001,7 @@ const CustomerMyBookingsPage = ({
                               {isPaid ? (
                                 <span className="cmb-paid-badge">Paid</span>
                               ) : (
-                                <span style={{ color: '#92400e', fontWeight: 900 }}>Unpaid</span>
+                                <span style={{ color: '#1e3a8a', fontWeight: 900 }}>Unpaid</span>
                               )}
                             </div>
                           </div>
@@ -1176,9 +1176,9 @@ const CustomerMyBookingsPage = ({
                   marginTop: 10,
                   padding: '10px 12px',
                   borderRadius: 12,
-                  background: '#fef3c7',
-                  border: '1px solid rgba(146,64,14,0.25)',
-                  color: '#92400e',
+                  background: '#dbeafe',
+                  border: '1px solid rgba(30,58,138,0.25)',
+                  color: '#1e3a8a',
                   fontSize: 12,
                   fontWeight: 800,
                 }}

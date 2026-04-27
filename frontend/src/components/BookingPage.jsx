@@ -651,7 +651,7 @@ const BookingPage = ({
         .booking-page-root .booking-shell{
           flex: 1;
           min-height: 0;
-          background: #fbf2e8;
+          background: #f1f5f9;
           padding: 22px 16px 30px;
           color: #1f2937;
         }
@@ -678,11 +678,11 @@ const BookingPage = ({
           margin: 0;
           font-size: 34px;
           font-weight: 1100;
-          color: #6b3d12;
+          color: #0f172a;
         }
         .booking-subtitle{
           margin: 4px 0 0;
-          color: #9a6a3d;
+          color: #475569;
           font-weight: 800;
           font-size: 13px;
         }
@@ -700,8 +700,8 @@ const BookingPage = ({
           margin-bottom: 14px;
           padding: 14px 14px 12px;
           border-radius: 14px;
-          background: #fffbf5;
-          border: 1px solid #f3e8d8;
+          background: #eff6ff;
+          border: 1px solid #dbeafe;
         }
         .booking-steps-line{
           position:absolute;
@@ -716,7 +716,7 @@ const BookingPage = ({
         .booking-steps-line-fill{
           height:100%;
           border-radius:999px;
-          background: linear-gradient(90deg, #f59e0b, #2563eb);
+          background: linear-gradient(90deg, #1e3a8a, #2563eb);
           transition: width 0.2s ease;
         }
         .booking-step{
@@ -749,7 +749,7 @@ const BookingPage = ({
         .booking-step-label{
           font-size:11px;
           font-weight:800;
-          color:#9a6a3d;
+          color:#475569;
         }
         .booking-step.active .booking-step-label{
           color:#1d4ed8;
@@ -765,7 +765,7 @@ const BookingPage = ({
           width: 56px;
           height: 56px;
           border-radius: 999px;
-          background: #f97316;
+          background: #1e3a8a;
           display:flex;
           align-items:center;
           justify-content:center;
@@ -777,12 +777,12 @@ const BookingPage = ({
           text-align:center;
           font-weight:1100;
           margin: 0;
-          color: #3b2109;
+          color: #0f172a;
         }
         .provider-role{
           text-align:center;
           margin: 2px 0 10px;
-          color:#9a6a3d;
+          color:#475569;
           font-weight: 800;
           font-size: 12px;
         }
@@ -793,20 +793,20 @@ const BookingPage = ({
           margin-top: 10px;
         }
         .meta-item{
-          background: #fff7ed;
-          border: 1px solid rgba(249,115,22,0.25);
+          background: #eff6ff;
+          border: 1px solid rgba(30,58,138,0.25);
           border-radius: 14px;
           padding: 10px;
         }
         .meta-label{
-          color:#9a6a3d;
+          color:#475569;
           font-weight:900;
           font-size: 11px;
           margin-bottom: 4px;
         }
         .meta-value{
           font-weight: 1100;
-          color:#3b2109;
+          color:#0f172a;
           font-size: 12px;
         }
         .meta-item-service{
@@ -817,10 +817,10 @@ const BookingPage = ({
           margin-top: 4px;
           padding: 8px 10px;
           border-radius: 10px;
-          border: 1px solid rgba(249,115,22,0.35);
+          border: 1px solid rgba(30,58,138,0.35);
           font-size: 12px;
           font-weight: 800;
-          color: #3b2109;
+          color: #0f172a;
           background: #fff;
           cursor: pointer;
           box-sizing: border-box;
@@ -832,23 +832,23 @@ const BookingPage = ({
           flex-shrink: 0;
         }
         .meta-service-select:focus{
-          outline: 2px solid rgba(249,115,22,0.25);
+          outline: 2px solid rgba(30,58,138,0.25);
           outline-offset: 1px;
         }
         .meta-price-range{
           margin-top: 8px;
           font-size: 11px;
           font-weight: 800;
-          color: #7c4a0a;
+          color: #1e3a8a;
           line-height: 1.35;
         }
         .guarantee{
           margin-top: 12px;
-          background: #7c4a0a;
+          background: #1e3a8a;
           color: #fff;
           border-radius: 16px;
           padding: 14px;
-          box-shadow: 0 14px 26px rgba(124,74,10,0.25);
+          box-shadow: 0 14px 26px rgba(30,58,138,0.25);
         }
         .guarantee h4{
           margin: 0 0 6px;
@@ -886,7 +886,7 @@ const BookingPage = ({
         }
         .cal-month{
           font-weight: 1100;
-          color:#3b2109;
+          color:#0f172a;
           font-size: 13px;
         }
         .cal-nav{
@@ -909,7 +909,7 @@ const BookingPage = ({
         }
         .cal-dow{
           font-size: 10px;
-          color:#9a6a3d;
+          color:#475569;
           font-weight: 1000;
           text-align:center;
           padding: 4px 0;
@@ -924,7 +924,7 @@ const BookingPage = ({
           justify-content:center;
           cursor:pointer;
           font-weight:1000;
-          color:#3b2109;
+          color:#0f172a;
         }
         .cal-day.pad{
           border:none;
@@ -936,10 +936,10 @@ const BookingPage = ({
           cursor: not-allowed;
         }
         .cal-day.selected{
-          background: #7c4a0a;
+          background: #1e3a8a;
           color:#fff;
-          border-color: rgba(124,74,10,0.35);
-          box-shadow: 0 10px 18px rgba(124,74,10,0.22);
+          border-color: rgba(30,58,138,0.35);
+          box-shadow: 0 10px 18px rgba(30,58,138,0.22);
         }
         .hours-stepper{
           display:flex;
@@ -948,19 +948,19 @@ const BookingPage = ({
           gap:12px;
           margin-bottom:14px;
           padding:12px 14px;
-          background:#fff7ed;
-          border:1px solid rgba(249,115,22,0.25);
+          background:#eff6ff;
+          border:1px solid rgba(30,58,138,0.25);
           border-radius:14px;
         }
         .hours-stepper-label{
           font-size:12px;
           font-weight:900;
-          color:#3b2109;
+          color:#0f172a;
         }
         .hours-stepper-sub{
           font-size:11px;
           font-weight:700;
-          color:#9a6a3d;
+          color:#475569;
           margin-top:2px;
         }
         .hours-stepper-controls{
@@ -970,10 +970,10 @@ const BookingPage = ({
         }
         .hours-select{
           min-width: 140px;
-          border: 1px solid rgba(249,115,22,0.45);
+          border: 1px solid rgba(30,58,138,0.45);
           border-radius: 10px;
           background: #fff;
-          color: #7c4a0a;
+          color: #1e3a8a;
           font-size: 13px;
           font-weight: 900;
           padding: 8px 10px;
@@ -982,11 +982,11 @@ const BookingPage = ({
           width:36px;
           height:36px;
           border-radius:10px;
-          border:1px solid rgba(249,115,22,0.45);
+          border:1px solid rgba(30,58,138,0.45);
           background:#fff;
           font-size:18px;
           font-weight:900;
-          color:#7c4a0a;
+          color:#1e3a8a;
           cursor:pointer;
           line-height:1;
         }
@@ -999,7 +999,7 @@ const BookingPage = ({
           text-align:center;
           font-size:18px;
           font-weight:1100;
-          color:#3b2109;
+          color:#0f172a;
         }
         .times-header{
           display:flex;
@@ -1011,16 +1011,16 @@ const BookingPage = ({
           margin:0;
           font-size: 12px;
           font-weight:1100;
-          color:#3b2109;
+          color:#0f172a;
         }
         .live-pill{
           font-size: 10px;
           font-weight: 1100;
-          background: #fff7ed;
-          border: 1px solid rgba(249,115,22,0.25);
+          background: #eff6ff;
+          border: 1px solid rgba(30,58,138,0.25);
           border-radius: 999px;
           padding: 4px 8px;
-          color:#9a6a3d;
+          color:#475569;
         }
         .times-grid{
           display:grid;
@@ -1034,7 +1034,7 @@ const BookingPage = ({
           padding: 11px 10px;
           cursor:pointer;
           font-weight: 1100;
-          color:#3b2109;
+          color:#0f172a;
           display:flex;
           justify-content:center;
         }
@@ -1055,9 +1055,9 @@ const BookingPage = ({
           opacity: 1;
         }
         .time-btn.selected{
-          border-color: rgba(249,115,22,0.55);
-          box-shadow: 0 10px 18px rgba(249,115,22,0.18);
-          background: #fff7ed;
+          border-color: rgba(30,58,138,0.55);
+          box-shadow: 0 10px 18px rgba(30,58,138,0.18);
+          background: #eff6ff;
         }
         .location-card{
           margin-top: 12px;
@@ -1116,8 +1116,8 @@ const BookingPage = ({
         }
         .booking-bottom{
           margin-top: 14px;
-          background: #fff7ed;
-          border: 1px solid rgba(249,115,22,0.25);
+          background: #eff6ff;
+          border: 1px solid rgba(30,58,138,0.25);
           border-radius: 16px;
           padding: 14px;
           display:flex;
@@ -1140,7 +1140,7 @@ const BookingPage = ({
           width: 40px;
           height: 40px;
           border-radius: 14px;
-          background: rgba(249,115,22,0.16);
+          background: rgba(30,58,138,0.16);
           color: #fbf9f7;
           display:flex;
           align-items:center;
@@ -1150,17 +1150,17 @@ const BookingPage = ({
         .session-label{
           font-size: 10px;
           font-weight: 1100;
-          color:#9a6a3d;
+          color:#475569;
           letter-spacing: 0.4px;
         }
         .session-value{
           font-size: 12px;
           font-weight: 1100;
-          color:#3b2109;
+          color:#0f172a;
         }
         .next-btn{
           border:none;
-          background: #a4570a;
+          background: #1e3a8a;
           color: #fff;
           padding: 12px 18px;
           border-radius: 999px;
@@ -1249,7 +1249,7 @@ const BookingPage = ({
           font-size:24px;
         }
         .review-star-active{
-          color:#f97316;
+          color:#1e3a8a;
         }
         .review-star-inactive{
           color:#d1d5db;
@@ -1320,7 +1320,7 @@ const BookingPage = ({
         }
         .summary-k{
           font-size: 10px;
-          color: #9a6a3d;
+          color: #475569;
           font-weight: 900;
           text-transform: uppercase;
           margin-bottom: 4px;
@@ -1368,7 +1368,7 @@ const BookingPage = ({
           color: #fff;
           margin-top: 2px;
         }
-        .timeline-dot.active{ background: #f59e0b; }
+        .timeline-dot.active{ background: #1e3a8a; }
         .timeline-dot.done{ background: #16a34a; }
         .timeline-dot.pending{ background: #cbd5e1; color: #334155; }
         .timeline-step-title{
@@ -1443,14 +1443,14 @@ const BookingPage = ({
                                 checked={selectedServiceNames.includes(svc)}
                                 onChange={() => toggleService(svc)}
                               />
-                              <span style={{ fontSize: '14px', color: '#3b2109', fontWeight: 600, flex: 1 }}>{svc}</span>
+                              <span style={{ fontSize: '14px', color: '#0f172a', fontWeight: 600, flex: 1 }}>{svc}</span>
                               {hasRate && (
                                 <span style={{
                                   fontSize: '12px',
                                   fontWeight: 800,
-                                  color: '#7c4a0a',
-                                  background: '#fff7ed',
-                                  border: '1px solid rgba(249,115,22,0.25)',
+                                  color: '#1e3a8a',
+                                  background: '#eff6ff',
+                                  border: '1px solid rgba(30,58,138,0.25)',
                                   borderRadius: '8px',
                                   padding: '2px 8px',
                                   whiteSpace: 'nowrap'
@@ -1504,7 +1504,7 @@ const BookingPage = ({
                         <div className="meta-value">
                           {bookingHours} hour{bookingHours !== 1 ? 's' : ''}
                           {estimatedTotalLkr != null && (
-                            <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: '#7c4a0a', fontWeight: 800 }}>
+                            <span style={{ display: 'block', marginTop: 4, fontSize: 11, color: '#1e3a8a', fontWeight: 800 }}>
                               Est. total: LKR {estimatedTotalLkr.toLocaleString()}
                             </span>
                           )}
@@ -1537,7 +1537,7 @@ const BookingPage = ({
             <div className="booking-main">
               {activeInterface === 1 && (
                 <>
-                  <div style={{ fontSize: 11, fontWeight: 900, color: '#9a6a3d', marginBottom: 8 }}>Step 2: Choose Date</div>
+                  <div style={{ fontSize: 11, fontWeight: 900, color: '#475569', marginBottom: 8 }}>Step 2: Choose Date</div>
                   <div className="cal-header">
                     <div className="cal-month">{formatMonthYear(monthCursor)}</div>
                     <div className="cal-nav">
@@ -1635,14 +1635,14 @@ const BookingPage = ({
                   </div>
 
                   {bookedTimesLoading && selectedDate && (
-                    <div style={{ fontSize: 11, fontWeight: 900, color: '#9a6a3d', marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 900, color: '#475569', marginBottom: 10 }}>
                       Checking booked slots…
                     </div>
                   )}
 
                   {timeSections.map((section) => (
                     <div key={section.id} style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 11, fontWeight: 1100, color: '#3b2109', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 1100, color: '#0f172a', marginBottom: 8 }}>
                         {section.title}
                       </div>
                       <div className="times-grid">

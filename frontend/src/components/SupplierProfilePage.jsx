@@ -597,9 +597,9 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
       <style>{`
         /* Base variables */
         .modern-supplier-profile {
-          --primary: #f97316;
-          --primary-dark: #ea580c;
-          --primary-light: #fed7aa;
+          --primary: #1e3a8a;
+          --primary-dark: #1e40af;
+          --primary-light: #bfdbfe;
           --gray-50: #f9fafb;
           --gray-100: #f3f4f6;
           --gray-200: #e5e7eb;
@@ -624,7 +624,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
 
         .modern-supplier-profile {
           min-height: calc(100vh - 80px);
-          background: linear-gradient(135deg, #fff5e8 0%, #fff0e0 100%);
+          background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%);
           padding: 2rem 1rem;
           font-family: var(--font-sans);
           color: var(--gray-900);
@@ -646,7 +646,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
 
         /* Header */
         .profile-header {
-          background: linear-gradient(135deg, #fff 0%, #fffaf5 100%);
+          background: linear-gradient(135deg, #fff 0%, #eff6ff 100%);
           padding: 2rem;
           border-bottom: 1px solid var(--gray-200);
           display: flex;
@@ -667,7 +667,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
           width: 100px;
           height: 100px;
           border-radius: 32px;
-          background: linear-gradient(135deg, var(--primary-light), #ffedd5);
+          background: linear-gradient(135deg, var(--primary-light), #dbeafe);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -820,7 +820,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
         }
 
         .btn-primary:hover {
-          background: linear-gradient(135deg, var(--primary-dark), #c2410c);
+          background: linear-gradient(135deg, #1e40af, #000000);
           transform: translateY(-1px);
           box-shadow: var(--shadow-md);
         }
@@ -966,7 +966,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
         .field textarea:focus {
           outline: none;
           border-color: var(--primary);
-          box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.2);
+          box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.2);
         }
 
         .services-grid {
@@ -990,7 +990,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
 
         .service-check:hover {
           border-color: var(--primary-light);
-          background: #fffaf5;
+          background: #eff6ff;
         }
 
         .service-check input {
@@ -1010,7 +1010,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
           display: inline-flex;
           align-items: center;
           gap: 0.5rem;
-          background: #fff7ed;
+          background: #eff6ff;
           border: 1px solid var(--primary-light);
           border-radius: 999px;
           padding: 0.375rem 0.75rem;
@@ -1255,7 +1255,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
         }
         .profile-tab-btn:hover {
           color: var(--primary-dark);
-          background: rgba(249,115,22,0.04);
+          background: rgba(30,58,138,0.06);
         }
         .profile-tab-btn.active {
           color: var(--primary-dark);
@@ -1277,7 +1277,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
         }
         .pricelist-card:hover {
           border-color: var(--primary-light);
-          box-shadow: 0 4px 15px rgba(249,115,22,0.06);
+          box-shadow: 0 4px 15px rgba(30,58,138,0.08);
         }
         .pricelist-card-header {
           display: flex;
@@ -1313,9 +1313,9 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
           color: #166534;
         }
         .pricelist-rate-badge.unset {
-          background: #fff7ed;
-          border: 1px solid #fed7aa;
-          color: #9a3412;
+          background: #dbeafe;
+          border: 1px solid #bfdbfe;
+          color: #1e3a8a;
         }
         .pricelist-bounds {
           font-size: 0.8125rem;
@@ -1346,7 +1346,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
         .pricelist-input-row input:focus {
           outline: none;
           border-color: var(--primary);
-          box-shadow: 0 0 0 3px rgba(249,115,22,0.15);
+          box-shadow: 0 0 0 3px rgba(30,58,138,0.15);
         }
         .pricelist-input-row input.valid {
           border-color: #22c55e;

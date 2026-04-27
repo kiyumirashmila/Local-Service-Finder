@@ -165,7 +165,7 @@
 }
 
 .logo-icon {
-  background: var(--primary);
+  background: #1e3a8a;
   width: 40px;
   height: 40px;
   border-radius: 12px;
@@ -182,7 +182,7 @@
 }
 
 .logo-text span {
-  color: var(--primary);
+  color: #1e3a8a;
 }
 
 .quick-links {
@@ -216,13 +216,13 @@
 .quick-link:hover {
   background: transparent;
   border-color: transparent;
-  color: var(--primary-dark);
+  color: #1e3a8a;
   transform: translateY(-1px);
   text-decoration: underline;
 }
 
 .quick-link:focus {
-  outline: 3px solid rgba(249, 115, 22, 0.25);
+  outline: 3px solid rgba(30, 58, 138, 0.25);
   outline-offset: 2px;
 }
 
@@ -242,7 +242,7 @@
 
 /* Buttons */
 .btn-primary {
-  background: var(--primary);
+  background: #1e3a8a;
   color: #fff;
   border: none;
   padding: 10px 24px;
@@ -257,15 +257,15 @@
 }
 
 .btn-primary:hover {
-  background: var(--primary-dark);
+  background: #000000;
   transform: translateY(-1px);
   box-shadow: var(--shadow-lg);
 }
 
 .btn-outline {
   background: transparent;
-  border: 1.5px solid var(--primary);
-  color: var(--primary);
+  border: 1.5px solid #1e3a8a;
+  color: #1e3a8a;
   padding: 10px 24px;
   border-radius: 40px;
   font-weight: 600;
@@ -278,7 +278,7 @@
 }
 
 .btn-outline:hover {
-  background: var(--primary-light);
+  background: rgba(30, 58, 138, 0.08);
   transform: translateY(-1px);
 }
 

@@ -66,10 +66,10 @@ const SupplierFeedbackSummaryPage = ({ onBack }) => {
     <div style={{ maxWidth: 1000, margin: '0 auto', padding: '20px 16px 36px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button type="button" onClick={onBack} style={{ ...btnStyle, color: '#374151' }} aria-label="Back">
+          <button type="button" onClick={onBack} style={{ ...btnStyle, color: '#1e3a8a' }} aria-label="Back">
             ← Back
           </button>
-          <h2 style={{ margin: 0, color: '#1f2937' }}>Feedback Summary</h2>
+          <h2 style={{ margin: 0, color: '#0f172a' }}>Feedback Summary</h2>
         </div>
       </div>
 
@@ -83,7 +83,7 @@ const SupplierFeedbackSummaryPage = ({ onBack }) => {
             style={{
               width: `${progress.percent}%`,
               height: '100%',
-              background: 'linear-gradient(90deg, #f59e0b, #22c55e)',
+              background: 'linear-gradient(90deg, #1e3a8a, #3b82f6)',
               transition: 'width 250ms ease',
             }}
           />
@@ -106,7 +106,7 @@ const SupplierFeedbackSummaryPage = ({ onBack }) => {
                   <strong>{r.customerName}</strong>
                   <span style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.date).toLocaleDateString()}</span>
                 </div>
-                <div style={{ marginTop: 4, color: '#92400e', fontWeight: 900 }}>
+                <div style={{ marginTop: 4, color: '#1e3a8a', fontWeight: 900 }}>
                   {'★'.repeat(Math.max(0, r.rating))}
                   {'☆'.repeat(Math.max(0, 5 - r.rating))} ({r.rating}/5)
                 </div>
@@ -123,7 +123,7 @@ const SupplierFeedbackSummaryPage = ({ onBack }) => {
 const panelStyle = {
   border: '1px solid #e5e7eb',
   borderRadius: 16,
-  background: '#fffbf5',
+  background: '#eff6ff',
   padding: 14,
 };
 
