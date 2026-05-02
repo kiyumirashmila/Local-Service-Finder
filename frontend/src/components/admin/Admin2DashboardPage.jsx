@@ -24,7 +24,10 @@ import {
   saveGradingConfig
 } from '../../services/api';
 
-/** Dummy regional rates for dashboard research preview (UI only). */
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
+
 const DUMMY_RESEARCH_ROWS = [
   { region: 'Colombo', avgMin: 1200, avgMax: 2800, demandPct: 72 },
   { region: 'Kandy', avgMin: 900, avgMax: 2100, demandPct: 58 },
@@ -93,6 +96,48 @@ const PREDICTION_DATA = [
   { category: "Tech Admin", service: "Virtual Assistant Support", min: 1500, max: 4500 }
 ];
 
+// ---------- Demand Prediction Helpers ----------
+function generateMockDemand(days = 30) {
+  const data = [];
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  for (let i = 0; i < days; i++) {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + i);
+    const dayOfWeek = date.getDay();
+    let base = 40;
+    if (dayOfWeek === 0 || dayOfWeek === 6) base = 65;
+    else if (dayOfWeek === 1) base = 35;
+    const trend = 1 + (i / days) * 0.3;
+    const noise = Math.random() * 20 - 10;
+    const value = Math.max(10, Math.round(base * trend + noise));
+    data.push({ date: date.toISOString().slice(0, 10), requests: value });
+  }
+  return data;
+}
+
+function generateMockPopularity() {
+  const serviceCounts = new Map();
+  PREDICTION_DATA.forEach(item => {
+    const name = item.service;
+    const count = Math.floor(Math.random() * 300) + 50;
+    serviceCounts.set(name, count);
+  });
+  return Array.from(serviceCounts.entries())
+    .map(([service, requests]) => ({ service, requests }))
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 10);
+}
+
+function exponentialSmoothingForecast(history, periods = 7, alpha = 0.3) {
+  if (history.length === 0) return [];
+  let last = history[0];
+  for (let i = 1; i < history.length; i++) {
+    last = alpha * history[i] + (1 - alpha) * last;
+  }
+  return Array(periods).fill().map(() => Math.round(last));
+}
+
 const Admin2DashboardPage = () => {
   const { user, isAuthenticated, logout } = useContext(AuthContext);
   const [tab, setTab] = useState('overview');
@@ -109,9 +154,7 @@ const Admin2DashboardPage = () => {
     currency: 'LKR'
   });
   const [requestServices, setRequestServices] = useState([]);
-  /** @type {Record<string, string>} */
   const [serviceDescriptionsByService, setServiceDescriptionsByService] = useState({});
-  /** @type {Record<string, { min: number; max: number }>} */
   const [serviceRatesByService, setServiceRatesByService] = useState({});
   const [activeServiceName, setActiveServiceName] = useState(null);
   const [serviceRateMsg, setServiceRateMsg] = useState('');
@@ -132,7 +175,7 @@ const Admin2DashboardPage = () => {
 
   const GRADING_KEY = 'lsf_grading_config_v1';
   const defaultGrading = {
-    A: { minYears: 5, stars: 5, priceRangeMin: 80, priceRangeMax: 100, label: 'A - 5+ yers experience' },
+    A: { minYears: 5, stars: 5, priceRangeMin: 80, priceRangeMax: 100, label: 'A - 5+ years experience' },
     B: { minYears: 3, stars: 4, priceRangeMin: 60, priceRangeMax: 80, label: 'Grade B — 3+ years experience' },
     C: { minYears: 0, stars: 3, priceRangeMin: 0, priceRangeMax: 60, label: 'Grade C — emerging tier' }
   };
@@ -140,14 +183,13 @@ const Admin2DashboardPage = () => {
   const [gradingSaved, setGradingSaved] = useState(defaultGrading);
   const [gradingMsg, setGradingMsg] = useState('');
 
-  // Services command center state
   const [services, setServices] = useState([]);
   const [marketRows, setMarketRows] = useState([]);
   const [researchSearchCat, setResearchSearchCat] = useState('');
   const [researchSearchSvc, setResearchSearchSvc] = useState('');
   const [svcSearch, setSvcSearch] = useState('');
   const [svcCategory, setSvcCategory] = useState('');
-  const [svcStatus, setSvcStatus] = useState('all'); // all | active | inactive
+  const [svcStatus, setSvcStatus] = useState('all');
 
   const [createForm, setCreateForm] = useState({
     title: '',
@@ -163,6 +205,12 @@ const Admin2DashboardPage = () => {
   const [creating, setCreating] = useState(false);
   const [editingService, setEditingService] = useState(null);
   const [createFormTouched, setCreateFormTouched] = useState({});
+
+  // Demand prediction state
+  const [demandHistory, setDemandHistory] = useState([]);
+  const [popularityData, setPopularityData] = useState([]);
+  const [forecastValues, setForecastValues] = useState([]);
+  const [forecastDates, setForecastDates] = useState([]);
 
   const validateServiceField = (name, value) => {
     if (name === 'title') {
@@ -188,7 +236,6 @@ const Admin2DashboardPage = () => {
     setCreateFormTouched(prev => ({ ...prev, [name]: true }));
   };
 
-
   const isAdmin2 = useMemo(
     () => isAuthenticated && String(user?.email || '').toLowerCase() === 'admin2@admin.com',
     [isAuthenticated, user?.email]
@@ -197,9 +244,12 @@ const Admin2DashboardPage = () => {
   const requestStatusBadge = (status) => {
     const s = String(status || 'pending').toLowerCase();
     if (s === 'completed') {
-      return { label: 'Complete', bg: 'rgba(22,163,74,0.22)', color: '#bbf7d0', border: '1px solid rgba(34,197,94,0.5)' };
+      return { label: 'Complete', bg: 'rgba(16,185,129,0.12)', color: '#065f46', border: '1px solid rgba(16,185,129,0.4)' };
     }
-    return { label: 'Pending', bg: 'rgba(217,119,6,0.2)', color: '#fde68a', border: '1px solid rgba(245,158,11,0.45)' };
+    if (s === 'rejected') {
+      return { label: 'Rejected', bg: 'rgba(239,68,68,0.1)', color: '#991b1b', border: '1px solid rgba(239,68,68,0.35)' };
+    }
+    return { label: 'Pending', bg: 'rgba(30,58,138,0.08)', color: '#1e3a8a', border: '1px solid rgba(30,58,138,0.3)' };
   };
 
   const loadRequests = async () => {
@@ -234,7 +284,7 @@ const Admin2DashboardPage = () => {
   };
 
   const loadCategories = async () => {
-    const res = await fetchCategories({ search: taxSearch.trim() || undefined });
+    const res = await fetchCategories();
     setCategories(res.data || []);
   };
 
@@ -253,9 +303,24 @@ const Admin2DashboardPage = () => {
     loadMarket().catch(() => {});
     loadServices().catch(() => {});
     loadCategories().catch(() => {});
+
+    const history = generateMockDemand(30);
+    setDemandHistory(history);
+    setPopularityData(generateMockPopularity());
+
+    const requestsOnly = history.map(d => d.requests);
+    const forecast = exponentialSmoothingForecast(requestsOnly, 7);
+    setForecastValues(forecast);
+
+    const lastDate = new Date(history[history.length-1].date);
+    const futureDates = [];
+    for (let i = 1; i <= 7; i++) {
+      const next = new Date(lastDate);
+      next.setDate(lastDate.getDate() + i);
+      futureDates.push(next.toISOString().slice(0, 10));
+    }
+    setForecastDates(futureDates);
   }, [isAdmin2]);
-
-
 
   useEffect(() => {
     if (!isAdmin2) return;
@@ -268,9 +333,7 @@ const Admin2DashboardPage = () => {
           setGradingSaved(d);
           return;
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
       try {
         const raw = localStorage.getItem(GRADING_KEY);
         const parsed = raw ? JSON.parse(raw) : null;
@@ -278,35 +341,20 @@ const Admin2DashboardPage = () => {
           setGradingDraft(parsed);
           setGradingSaved(parsed);
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin2]);
 
   if (!isAdmin2) {
     return (
       <div style={{ minHeight: 'calc(100vh - 80px)', padding: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: '100%', maxWidth: 760, background: '#fff', borderRadius: 18, border: '1px solid rgba(229,231,235,1)', padding: 22 }}>
-          <h2 style={{ margin: 0, fontWeight: 1100, color: '#111827' }}>Operational Manager access required</h2>
-          <p style={{ margin: '8px 0 0', color: '#6b7280', fontWeight: 800 }}>
-            Please sign in with operational manager credentials to manage categories, services, and live requests.
-          </p>
+          <h2>Operational Manager access required</h2>
+          <p>Please sign in with operational manager credentials.</p>
           <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
-            <button type="button" onClick={() => (window.location.hash = 'login')}>
-              Go to Login
-            </button>
+            <button onClick={() => (window.location.hash = 'login')}>Go to Login</button>
             {isAuthenticated && (
-              <button
-                type="button"
-                onClick={() => {
-                  logout();
-                  window.location.hash = 'login';
-                }}
-              >
-                Logout
-              </button>
+              <button onClick={() => { logout(); window.location.hash = 'login'; }}>Logout</button>
             )}
           </div>
         </div>
@@ -314,6 +362,7 @@ const Admin2DashboardPage = () => {
     );
   }
 
+  // ---------- Request handlers (same as original) ----------
   const openRequestEditor = (req) => {
     setSelectedRequest(req);
     setServiceRateMsg('');
@@ -324,7 +373,6 @@ const Admin2DashboardPage = () => {
     const fbMin = Number.isFinite(fallbackMin) && fallbackMin >= 0 ? fallbackMin : 500;
     const fbMax = Number.isFinite(fallbackMax) && fallbackMax >= fbMin ? fallbackMax : Math.max(fbMin + 500, 1500);
     const existing = Array.isArray(req.serviceRates) ? req.serviceRates : [];
-    /** @type {Record<string, { min: number; max: number }>} */
     const rates = {};
     svcs.forEach((raw) => {
       const name = String(raw || '').trim();
@@ -339,7 +387,6 @@ const Admin2DashboardPage = () => {
     setServiceRatesByService(rates);
     const legacyDesc = String(req.serviceDescription || '').trim();
     const fromApi = Array.isArray(req.serviceDescriptions) ? req.serviceDescriptions : [];
-    /** @type {Record<string, string>} */
     const descMap = {};
     svcs.forEach((raw) => {
       const name = String(raw || '').trim();
@@ -365,7 +412,6 @@ const Admin2DashboardPage = () => {
     const knownCats = (catalogOptions.categories || []).map((c) => String(c).toLowerCase());
     const isKnownCategory = !!cat && knownCats.includes(cat.toLowerCase());
     if (!isKnownCategory) return 'category';
-
     const knownSvcs = (catalogOptions.servicesByCategory?.[req?.category] || []).map((s) => String(s).toLowerCase());
     const reqSvcs = Array.isArray(req?.services) ? req.services : [];
     const hasNewService = reqSvcs.some((s) => s && !knownSvcs.includes(String(s).toLowerCase()));
@@ -377,15 +423,13 @@ const Admin2DashboardPage = () => {
     const names = (requestServices || []).map((s) => String(s || '').trim()).filter(Boolean);
     setServiceRatesByService((prev) => {
       const next = { ...prev };
-      const sample =
-        Object.values(next)[0] ||
-        (() => {
-          const a = Number(requestForm.minRatePerHour);
-          const b = Number(requestForm.maxRatePerHour);
-          const mn = Number.isFinite(a) && a >= 0 ? a : 500;
-          const mx = Number.isFinite(b) && b > mn ? b : mn + 500;
-          return { min: mn, max: mx };
-        })();
+      const sample = Object.values(next)[0] || (() => {
+        const a = Number(requestForm.minRatePerHour);
+        const b = Number(requestForm.maxRatePerHour);
+        const mn = Number.isFinite(a) && a >= 0 ? a : 500;
+        const mx = Number.isFinite(b) && b > mn ? b : mn + 500;
+        return { min: mn, max: mx };
+      })();
       let changed = false;
       names.forEach((name) => {
         if (!next[name]) {
@@ -401,10 +445,7 @@ const Admin2DashboardPage = () => {
       });
       return changed ? next : prev;
     });
-    setActiveServiceName((cur) => {
-      if (cur && names.includes(cur)) return cur;
-      return names[0] || null;
-    });
+    setActiveServiceName((cur) => (cur && names.includes(cur)) ? cur : names[0] || null);
     setServiceDescriptionsByService((prev) => {
       const next = { ...prev };
       let changed = false;
@@ -588,23 +629,12 @@ const Admin2DashboardPage = () => {
     if (!isAdmin2) return;
     const t = setTimeout(() => loadServices().catch(() => {}), 250);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svcSearch, svcCategory]);
 
   useEffect(() => {
     if (!isAdmin2) return;
-    if (tab === 'category') {
-      loadCategories().catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (tab === 'category') loadCategories().catch(() => {});
   }, [tab]);
-
-  useEffect(() => {
-    if (!isAdmin2) return;
-    const t = setTimeout(() => loadCategories().catch(() => {}), 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taxSearch]);
 
   const marketMap = useMemo(() => {
     const map = new Map();
@@ -640,22 +670,18 @@ const Admin2DashboardPage = () => {
 
   const overviewServicesSorted = useMemo(() => {
     const rows = [...services];
-    const cmp = (a, b) => {
-      if (overviewSort === 'category') {
-        return String(a.category || '').localeCompare(String(b.category || ''), undefined, { sensitivity: 'base' });
-      }
+    rows.sort((a, b) => {
+      if (overviewSort === 'category') return String(a.category || '').localeCompare(String(b.category || ''));
       if (overviewSort === 'status') {
         const sa = a.active !== false ? 1 : 0;
         const sb = b.active !== false ? 1 : 0;
         return sb - sa;
       }
-      return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' });
-    };
-    rows.sort(cmp);
+      return String(a.title || '').localeCompare(String(b.title || ''));
+    });
     return rows;
   }, [services, overviewSort]);
 
-  // Research command center state
   const [ledgerRows, setLedgerRows] = useState(() => [
     { id: cryptoId(), category: '', service: '', location: '', minRatePerHour: '', maxRatePerHour: '', currency: 'LKR', demand: 55 }
   ]);
@@ -670,19 +696,14 @@ const Admin2DashboardPage = () => {
         demandNum: Number(r.demand)
       }))
       .filter((r) => r.category && r.service && Number.isFinite(r.min) && Number.isFinite(r.max) && r.max >= r.min);
-
     const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
     const avgMin = avg(parsed.map((r) => r.min));
     const avgMax = avg(parsed.map((r) => r.max));
     const avgDemand = avg(parsed.map((r) => r.demandNum));
     const overallRange = parsed.length ? { min: Math.min(...parsed.map((r) => r.min)), max: Math.max(...parsed.map((r) => r.max)) } : { min: 0, max: 0 };
-
-    // Recommend a competitive entry point:
-    // base = midpoint, then adjust +-8% based on demand vs 50.
     const midpoint = (avgMin + avgMax) / 2 || 0;
     const demandAdj = midpoint * (((avgDemand - 50) / 50) * 0.08);
     const recommended = Math.max(0, midpoint + demandAdj);
-
     return {
       count: parsed.length,
       avgMin: Math.round(avgMin),
@@ -698,7 +719,6 @@ const Admin2DashboardPage = () => {
     const alerts = [];
     const now = new Date();
     const fmt = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
     ledgerRows.forEach((r) => {
       const min = Number(r.minRatePerHour);
       const max = Number(r.maxRatePerHour);
@@ -707,34 +727,18 @@ const Admin2DashboardPage = () => {
       const mid = (min + max) / 2 || 1;
       const volatility = (max - min) / mid;
       if (volatility >= 0.6) {
-        alerts.push({
-          t: fmt(now),
-          level: 'high',
-          msg: `Volatility alert: ${r.service} (${r.location || 'All'}) has a wide band (${min}–${max} ${r.currency}).`
-        });
+        alerts.push({ t: fmt(now), level: 'high', msg: `Volatility alert: ${r.service} (${r.location || 'All'}) has a wide band (${min}–${max} ${r.currency}).` });
       } else if (demand >= 80 && volatility >= 0.35) {
-        alerts.push({
-          t: fmt(now),
-          level: 'med',
-          msg: `Demand surge: ${r.service} shows high demand (${demand}%). Consider tightening range.`
-        });
+        alerts.push({ t: fmt(now), level: 'med', msg: `Demand surge: ${r.service} shows high demand (${demand}%). Consider tightening range.` });
       }
     });
-
-    if (!alerts.length) {
-      alerts.push({ t: fmt(now), level: 'ok', msg: 'No regional volatility alerts detected in current ledger.' });
-    }
+    if (!alerts.length) alerts.push({ t: fmt(now), level: 'ok', msg: 'No regional volatility alerts detected in current ledger.' });
     return alerts.slice(0, 6);
   }, [ledgerRows]);
 
   const calibrationSeries = useMemo(() => {
-    // Build a smooth curve from ledger recommended baseline across experience levels (1..5).
     const base = ledgerInsights.recommended || 0;
-    const levels = [1, 2, 3, 4, 5].map((lvl) => {
-      const factor = 0.78 + lvl * 0.11; // 0.89..1.33 (premium scaling)
-      return { level: lvl, rate: Math.round(base * factor) };
-    });
-    return levels;
+    return [1, 2, 3, 4, 5].map((lvl) => ({ level: lvl, rate: Math.round(base * (0.78 + lvl * 0.11)) }));
   }, [ledgerInsights.recommended]);
 
   const saveLedgerToBackend = async () => {
@@ -749,29 +753,18 @@ const Admin2DashboardPage = () => {
         demand: Number(r.demand)
       }))
       .filter((r) => r.category && r.service && Number.isFinite(r.min) && Number.isFinite(r.max) && r.max >= r.min);
-
-    if (!rows.length) {
-      setError('Add at least one valid ledger row (category, service, min/max).');
-      return;
-    }
-
+    if (!rows.length) { setError('Add at least one valid ledger row.'); return; }
     try {
       setLedgerSaving(true);
       setError('');
-      // Persist each node into MarketResearch.
-      // Location + demand are embedded into description for now (backend schema stays unchanged).
-      await Promise.all(
-        rows.map((r) =>
-          upsertMarketResearch({
-            category: r.category,
-            service: r.service,
-            description: `Location: ${r.location || 'All'} | Demand: ${Number.isFinite(r.demand) ? r.demand : 0}%`,
-            minRatePerHour: r.min,
-            maxRatePerHour: r.max,
-            currency: r.currency || 'LKR'
-          })
-        )
-      );
+      await Promise.all(rows.map((r) => upsertMarketResearch({
+        category: r.category,
+        service: r.service,
+        description: `Location: ${r.location || 'All'} | Demand: ${Number.isFinite(r.demand) ? r.demand : 0}%`,
+        minRatePerHour: r.min,
+        maxRatePerHour: r.max,
+        currency: r.currency || 'LKR'
+      })));
       await loadMarket();
     } catch (e) {
       setError(e?.response?.data?.message || 'Failed to save ledger entries.');
@@ -782,10 +775,9 @@ const Admin2DashboardPage = () => {
 
   const visibleCategories = useMemo(() => {
     let rows = [...categories];
-    if (taxFilter === 'active') rows = rows.filter((c) => c.active);
-    if (taxFilter === 'inactive') rows = rows.filter((c) => !c.active);
+    if (taxSearch) rows = rows.filter((c) => c.name === taxSearch);
     return rows;
-  }, [categories, taxFilter]);
+  }, [categories, taxSearch]);
 
   const duplicateNames = useMemo(() => {
     const count = {};
@@ -794,9 +786,7 @@ const Admin2DashboardPage = () => {
       if (!key) return;
       count[key] = (count[key] || 0) + 1;
     });
-    return Object.entries(count)
-      .filter(([, n]) => n > 1)
-      .map(([name]) => name);
+    return Object.entries(count).filter(([, n]) => n > 1).map(([name]) => name);
   }, [categories]);
 
   const createServiceRow = async () => {
@@ -826,11 +816,8 @@ const Admin2DashboardPage = () => {
         contact: 'N/A',
         description: String(createForm.description || '').trim()
       };
-      if (editingService) {
-        await updateService(editingService._id, payload);
-      } else {
-        await createService(payload);
-      }
+      if (editingService) await updateService(editingService._id, payload);
+      else await createService(payload);
       await upsertMarketResearch({
         category: createForm.category.trim(),
         service: createForm.title.trim(),
@@ -852,10 +839,7 @@ const Admin2DashboardPage = () => {
     try {
       setCreatingCategory(true);
       setError('');
-      if (!categoryForm.name.trim()) {
-        setError('Category name is required.');
-        return;
-      }
+      if (!categoryForm.name.trim()) { setError('Category name is required.'); return; }
       await createCategory({
         name: categoryForm.name.trim(),
         description: categoryForm.description.trim(),
@@ -883,10 +867,7 @@ const Admin2DashboardPage = () => {
     }
   };
 
-  const removeCategory = (row) => {
-    setCategoryToDelete(row);
-  };
-
+  const removeCategory = (row) => setCategoryToDelete(row);
   const confirmRemoveCategory = async () => {
     if (!categoryToDelete) return;
     try {
@@ -962,17 +943,17 @@ const Admin2DashboardPage = () => {
   }, [services]);
 
   const maxDummyDemand = Math.max(...DUMMY_RESEARCH_ROWS.map((r) => r.demandPct), 1);
+  const handleLoginClick = () => { window.location.hash = 'login'; };
+  const handleSignupClick = () => { window.location.hash = 'signup'; };
+  const handleProfileClick = () => { window.location.hash = 'profile'; };
 
-  const handleLoginClick = () => {
-    window.location.hash = 'login';
-  };
-  const handleSignupClick = () => {
-    window.location.hash = 'signup';
-  };
-  const handleProfileClick = () => {
-    window.location.hash = 'profile';
-  };
+  const forecastChartData = useMemo(() => {
+    const historical = demandHistory.map(d => ({ date: d.date, actual: d.requests, forecast: null }));
+    const future = forecastDates.map((date, idx) => ({ date, actual: null, forecast: forecastValues[idx] }));
+    return [...historical, ...future];
+  }, [demandHistory, forecastDates, forecastValues]);
 
+  // ---------- Render JSX ----------
   return (
     <>
       <Header
@@ -984,2087 +965,244 @@ const Admin2DashboardPage = () => {
         onLogout={logout}
         onProfileClick={handleProfileClick}
       />
-      <div className="cc-shell cc-shell-light">
-      <style>{`
-        .cc-shell{
-          min-height: calc(100vh - 80px);
-          display:flex;
-          background: radial-gradient(circle at 10% 0%, rgba(30,41,59,0.95), rgba(2,6,23,1) 55%);
-          color:#e5e7eb;
-        }
-        .cc-sidebar{
-          width: 260px;
-          border-right: 1px solid rgba(148,163,184,0.22);
-          background: radial-gradient(circle at top, rgba(2,6,23,0.75), rgba(2,6,23,0.98));
-          padding: 16px;
-          display:flex;
-          flex-direction:column;
-          gap: 14px;
-        }
-        .cc-brand{
-          display:flex;
-          align-items:center;
-          gap: 10px;
-          padding: 10px 8px;
-        }
-        .cc-badge{
-          width: 42px;
-          height: 42px;
-          border-radius: 16px;
-          background: linear-gradient(120deg, #22d3ee, #0ea5e9);
-          color:#0b1120;
-          font-weight: 1100;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          box-shadow: 0 18px 45px rgba(14,165,233,0.25);
-        }
-        .cc-brand h3{ margin:0; font-weight:1100; font-size: 15px; color:#e5e7eb; }
-        .cc-brand p{ margin:4px 0 0; color:#94a3b8; font-weight:800; font-size: 12px; }
-        .cc-role{
-          margin: 2px 0 0 !important;
-          color:#7dd3fc !important;
-          font-weight: 900 !important;
-          font-size: 11px !important;
-        }
-        .cc-nav{
-          display:flex;
-          flex-direction:column;
-          gap: 8px;
-          padding: 6px;
-          border: 1px solid rgba(148,163,184,0.14);
-          border-radius: 18px;
-          background: rgba(2,6,23,0.55);
-        }
-        .cc-nav button{
-          text-align:left;
-          border-radius: 16px;
-          padding: 12px 12px;
-          border: 1px solid transparent;
-          background: transparent;
-          cursor:pointer;
-          font-weight: 1100;
-          font-size: 13px;
-          color:#cbd5e1;
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap: 10px;
-        }
-        .cc-nav button.active{
-          border-color: rgba(34,211,238,0.35);
-          background: radial-gradient(circle at 0 0, rgba(34,211,238,0.20), rgba(2,6,23,0.9));
-          color:#e0f2fe;
-        }
-        .pill{
-          font-size: 12px;
-          font-weight: 1100;
-          padding: 4px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(148,163,184,0.18);
-          color:#94a3b8;
-          background: rgba(2,6,23,0.6);
-        }
-        .cc-main{
-          flex:1;
-          display:flex;
-          flex-direction:column;
-          min-width:0;
-        }
-        .cc-header{
-          height: 68px;
-          border-bottom: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.65);
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap: 12px;
-          padding: 0 18px;
-        }
-        .cc-header h2{ margin:0; font-size: 18px; font-weight: 1100; color:#e5e7eb; }
-        .cc-header .sub{ margin-top:4px; font-size: 13px; font-weight:900; color:#94a3b8; }
-        .cc-actions{ display:flex; align-items:center; gap: 10px; }
-        .icon-btn{
-          width: 42px;
-          height: 42px;
-          border-radius: 16px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.6);
-          color:#cbd5e1;
-          cursor:pointer;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          position: relative;
-        }
-        .notif{
-          position:absolute;
-          top: -6px;
-          right: -6px;
-          min-width: 20px;
-          height: 20px;
-          padding: 0 6px;
-          border-radius: 999px;
-          background: rgba(34,197,94,0.95);
-          color:#052e16;
-          font-weight: 1100;
-          font-size: 12px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          border: 1px solid rgba(16,185,129,0.45);
-        }
-        .logout-btn{
-          border-radius: 16px;
-          padding: 10px 14px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.6);
-          color:#e5e7eb;
-          font-weight: 1100;
-          cursor:pointer;
-        }
-        .cc-content{
-          padding: 18px;
-        }
+      <div className="cc-shell">
+        <style>{`
+          :root { --primary-dark: #27187E; --primary: #758BFD; --primary-soft: #AEB8FE; --bg-main: #F1F2F6; --cta: #1e3a8a; --accent-teal: #00AFB9; --accent-blue: #0081A7; --accent-peach: #FED9B7; --accent-coral: #F07167; --card-white: #ffffff; --gray-100: #EFF2F9; --gray-200: #E2E8F0; --gray-500: #64748B; --gray-700: #334155; --gray-900: #0F172A; --font-sans: sans-serif; }
+          .cc-shell{ min-height: calc(100vh - 80px); display: flex; background: var(--bg-main); color: var(--gray-900); font-family: var(--font-sans); font-size: 1.05rem; padding: 24px; }
+          .cc-sidebar{ width: 280px; border-right: 1px solid var(--primary-soft); background: var(--card-white); padding: 18px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 20px 60px rgba(15,23,42,0.08); border-radius: 28px; }
+          .cc-brand{ display: flex; align-items: center; gap: 14px; padding: 10px 8px; }
+          .cc-badge{ width: 46px; height: 46px; border-radius: 18px; background: var(--primary); color: var(--card-white); font-weight: 1100; display: flex; align-items: center; justify-content: center; box-shadow: 0 15px 35px rgba(117,139,253,0.25); }
+          .cc-brand h3{ margin:0; font-weight:1100; font-size: 16px; color:var(--primary-dark); }
+          .cc-brand p{ margin:4px 0 0; color:var(--gray-500); font-weight:800; font-size: 12px; }
+          .cc-role{ margin: 2px 0 0 !important; color:var(--primary) !important; font-weight: 900 !important; font-size: 11px !important; }
+          .cc-nav{ display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--primary-soft); border-radius: 22px; background: var(--card-white); }
+          .cc-nav button{ text-align: left; border-radius: 18px; padding: 14px 14px; border: 1px solid transparent; background: transparent; cursor: pointer; font-weight: 900; font-size: 14px; line-height: 1.4; color: var(--gray-900); display: flex; align-items: center; justify-content: space-between; gap: 12px; transition: all 0.2s ease; min-height: 56px; }
+          .cc-nav button:hover{ background: rgba(117,139,253,0.12); }
+          .cc-nav button.active{ border-color: rgba(30,58,138,0.2); background: rgba(30,58,138,0.08); color: var(--primary-dark); box-shadow: 0 14px 30px rgba(30,58,138,0.08); }
+          .cc-nav button.active .pill{ background: var(--primary); border-color: var(--primary); color: #fff; }
+          .cc-nav button span:first-child{ display: block; }
+          .pill{ font-size: 12px; font-weight: 900; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(117,139,253,0.35); color: var(--primary-dark); background: rgba(117,139,253,0.12); white-space: nowrap; }
+          .cc-main{ flex: 1; display: flex; flex-direction: column; min-width: 0; gap: 14px; }
+          .cc-header{ height: 68px; border-bottom: 1px solid var(--primary-soft); background: var(--card-white); display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; }
+          .cc-header h2{ margin:0; font-size: 18px; font-weight: 1100; color:var(--primary-dark); }
+          .cc-header .sub{ margin-top:4px; font-size: 13px; font-weight:900; color:var(--gray-500); }
+          .cc-actions{ display: flex; align-items: center; gap: 10px; }
+          .icon-btn{ width: 42px; height: 42px; border-radius: 16px; border: 1px solid var(--primary-soft); background: var(--card-white); color: var(--primary-dark); cursor: pointer; display: flex; align-items: center; justify-content: center; position: relative; transition: all 0.2s; }
+          .icon-btn:hover{ background: var(--primary-soft); color: #fff; }
+          .notif{ position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--cta); color: #fff; font-weight: 1100; font-size: 12px; display: flex; align-items: center; justify-content: center; border: 1px solid #fff; }
+          .logout-btn{ border-radius: 16px; padding: 10px 14px; border: 1px solid var(--primary-dark); background: var(--primary-dark); color: #fff; font-weight: 1100; cursor: pointer; transition: all 0.2s; }
+          .logout-btn:hover{ background: #000; border-color: #000; }
+          .cc-content{ padding: 18px; color: var(--gray-900); }
+          .zone{ display: grid; grid-template-columns: 1.7fr 1fr; gap: 14px; align-items: start; }
+          .card{ background: var(--card-white); border: 1px solid var(--primary-soft); border-radius: 20px; padding: 14px; box-shadow: 0 10px 30px rgba(39,24,126,0.05); }
+          .card h3{ margin:0; font-weight:1100; color:var(--primary-dark); font-size: 16px; }
+          .card p{ margin:6px 0 0; font-weight:800; color:var(--gray-500); font-size: 13px; }
+          .grid{ display: grid; gap: 10px; margin-top: 12px; }
+          .row2{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .row3{ display: grid; grid-template-columns: 1fr 1fr 120px; gap: 10px; }
+          .with-error{ position: relative; padding-top: 18px; }
+          .Validation-msg{ position: absolute; top: 0; right: 0; font-size: 11px; font-weight: 900; padding: 2px 6px; border-radius: 6px; z-index: 2; }
+          .Validation-msg.error{ background: #fee2e2; color: #ef4444; }
+          .Validation-msg.success{ background: #dcfce7; color: #22c55e; }
+          .input.valid, .textarea.valid, .select.valid{ border: 2px solid #22c55e !important; }
+          .input.invalid, .textarea.invalid, .select.invalid{ border: 2px solid #ef4444 !important; }
+          .input, .select{ width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--primary-soft); background: var(--card-white); color: var(--gray-900); outline: none; font-weight: 800; }
+          .primary{ border: none; border-radius: 999px; padding: 10px 12px; background: var(--primary-dark); color: #fff; font-weight: 1100; cursor: pointer; transition: all 0.2s; }
+          .primary:hover{ background: #000; }
+          .primary:disabled{ opacity: 0.7; cursor: not-allowed; }
+          .metric-grid{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+          .metric{ border-radius: 16px; border: 1px solid var(--primary-soft); background: var(--bg-main); padding: 12px; }
+          .metric .k{ color: var(--gray-500); font-weight: 900; font-size: 12px; }
+          .metric .v{ margin-top: 6px; font-size: 20px; font-weight: 1100; color: var(--primary-dark); }
+          .table-wrap{ margin-top: 14px; border-radius: 20px; border: 1px solid var(--primary-soft); overflow: hidden; background: var(--card-white); }
+          table{ width: 100%; border-collapse: collapse; }
+          th, td{ padding: 12px 10px; border-bottom: 1px solid var(--primary-soft); text-align: left; font-size: 13px; font-weight: 900; color: var(--gray-900); vertical-align: middle; }
+          th{ text-transform: uppercase; letter-spacing: 0.06em; color: var(--primary-dark); font-size: 11px; background: var(--bg-main); }
+          .status{ display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--primary-soft); background: var(--card-white); color: var(--gray-900); font-weight: 900; font-size: 13px; }
+          .dot{ width: 8px; height: 8px; border-radius: 999px; background: var(--gray-500); }
+          .dot.green{ background: #10b981; }
+          .dot.red{ background: #ef4444; }
+          .actions{ display: flex; gap: 8px; }
+          .btn{ border-radius: 999px; padding: 8px 10px; border: 1px solid var(--primary-soft); background: var(--card-white); color: var(--primary-dark); font-weight: 1100; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+          .btn:hover{ background: var(--bg-main); }
+          .btn.danger{ border-color: rgba(239,68,68,0.3); color: #ef4444; }
+          .modal{ position: fixed; inset: 0; background: rgba(15,23,42,0.55); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 9999; backdrop-filter: blur(4px); }
+          .modal-card{ width: 100%; max-width: 640px; background: var(--card-white); border: 1px solid var(--primary-soft); border-radius: 20px; padding: 14px; box-shadow: 0 25px 70px rgba(39,24,126,0.15); }
+          .tax-zone{ display: grid; grid-template-columns: 1fr 1.8fr; gap: 14px; }
+          .inventory-top{ display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+          .inventory-tools{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+          .integrity{ margin-top: 12px; border: 1px solid var(--primary-soft); border-radius: 16px; padding: 10px; background: var(--card-white); }
+          .integrity h4{ margin:0; font-size: 16px; color:var(--primary-dark); font-weight:1100; }
+          .integrity p{ margin:6px 0 0; color:var(--gray-500); font-weight:800; font-size: 13px; }
+          .grade-zone{ display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; align-items: start; }
+          .grade-stack{ display: grid; gap: 12px; }
+          .grade-card{ border-radius: 20px; border: 1px solid var(--primary-soft); background: var(--card-white); padding: 14px; box-shadow: 0 10px 30px rgba(39,24,126,0.05); }
+          .grade-head{ display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+          .grade-title{ display: flex; align-items: center; gap: 10px; }
+          .grade-badge{ width: 40px; height: 40px; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-weight: 1100; color: #fff; }
+          .grade-badge.a{ background: var(--primary); }
+          .grade-badge.b{ background: var(--cta); }
+          .grade-badge.c{ background: var(--gray-500); }
+          .grade-card h3{ margin:0; font-weight:1100; color:var(--primary-dark); font-size: 16px; }
+          .grade-card p{ margin:6px 0 0; font-weight:800; color:var(--gray-500); font-size: 13px; }
+          .slider-row{ margin-top: 12px; display: grid; grid-template-columns: 1fr 160px; gap: 10px; align-items: center; }
+          .slider-row label{ color: var(--gray-700); font-weight: 900; font-size: 13px; }
+          .slider{ width: 100%; }
+          .pill2{ justify-self: end; font-size: 13px; font-weight: 1100; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--primary-soft); background: var(--bg-main); color: var(--gray-900); font-family: monospace; }
+          .preview{ border-radius: 20px; border: 1px solid var(--primary-soft); background: var(--card-white); padding: 14px; box-shadow: 0 10px 30px rgba(39,24,126,0.05); }
+          .preview h3{ margin:0; font-weight:1100; color:var(--primary-dark); font-size: 16px; }
+          .preview p{ margin:6px 0 0; font-weight:800; color:var(--gray-500); font-size: 13px; }
+          .profile-mock{ margin-top: 12px; border-radius: 18px; border: 1px solid var(--primary-soft); background: var(--bg-main); padding: 12px; display: flex; gap: 12px; align-items: center; }
+          .avatar{ width: 52px; height: 52px; border-radius: 18px; border: 1px solid var(--primary-soft); background: var(--card-white); display: flex; align-items: center; justify-content: center; font-weight: 1100; color: var(--primary-dark); }
+          .mock-meta{ flex: 1; min-width: 0; }
+          .mock-meta .name{ font-weight: 1100; color: var(--gray-900); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .mock-meta .sub{ margin-top: 4px; color: var(--gray-500); font-weight: 800; font-size: 13px; }
+          .badge-pill{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--primary-soft); background: var(--card-white); color: var(--gray-900); font-weight: 1100; font-size: 12px; margin-top: 8px; }
+          .boost-bar{ margin-top: 10px; height: 10px; border-radius: 999px; border: 1px solid var(--primary-soft); background: var(--card-white); overflow: hidden; }
+          .boost-fill{ height: 100%; background: var(--primary); }
+          .footer-bar{ position: sticky; bottom: 0; margin-top: 14px; border-radius: 18px; border: 1px solid var(--primary-soft); background: rgba(255,255,255,0.9); padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; backdrop-filter: blur(10px); }
+          .footer-msg{ color: var(--gray-700); font-weight: 800; font-size: 13px; }
+          .footer-actions{ display: flex; gap: 10px; align-items: center; }
+          .research-bar{ height: 10px; border-radius: 999px; background: var(--gray-200); overflow: hidden; }
+          .research-bar-fill{ display: block; height: 100%; background: var(--cta); border-radius: 999px; }
+          @media (max-width: 980px){ .cc-shell{ flex-direction: column; } .cc-sidebar{ width: 100%; border-right: none; border-bottom: 1px solid var(--primary-soft); } .zone{ grid-template-columns: 1fr; } .tax-zone{ grid-template-columns: 1fr; } .grade-zone{ grid-template-columns: 1fr; } }
+        `}</style>
 
-        .zone{
-          display:grid;
-          grid-template-columns: 1.7fr 1fr;
-          gap: 14px;
-          align-items:start;
-        }
-        .card{
-          background: rgba(2,6,23,0.65);
-          border: 1px solid rgba(148,163,184,0.18);
-          border-radius: 20px;
-          padding: 14px;
-          box-shadow: 0 25px 70px rgba(0,0,0,0.25);
-        }
-        .card h3{ margin:0; font-weight:1100; color:#e5e7eb; font-size: 14px; }
-        .card p{ margin:6px 0 0; font-weight:800; color:#94a3b8; font-size: 12px; }
-        .grid{
-          display:grid;
-          gap: 10px;
-          margin-top: 12px;
-        }
-        .row2{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .row3{ display:grid; grid-template-columns: 1fr 1fr 120px; gap: 10px; }
-        .with-error { position: relative; padding-top: 18px; }
-        .Validation-msg {
-          position: absolute; top: 0; right: 0; font-size: 11px; font-weight: 900;
-          padding: 2px 6px; border-radius: 6px; z-index: 2;
-        }
-        .Validation-msg.error { background: #fee2e2; color: #ef4444; }
-        .Validation-msg.success { background: #dcfce7; color: #22c55e; }
-        .input.valid, .textarea.valid, .select.valid { border: 2px solid #22c55e !important; }
-        .input.invalid, .textarea.invalid, .select.invalid { border: 2px solid #ef4444 !important; }
-
-        .input, .select{
-          width:100%;
-          padding: 10px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(51,65,85,1);
-          background: rgba(15,23,42,0.92);
-          color:#e5e7eb;
-          outline:none;
-          font-weight: 800;
-        }
-        .primary{
-          border:none;
-          border-radius: 999px;
-          padding: 10px 12px;
-          background: linear-gradient(120deg, #22d3ee, #0ea5e9);
-          color:#0b1120;
-          font-weight: 1100;
-          cursor:pointer;
-        }
-        .primary:disabled{ opacity: 0.7; cursor:not-allowed; }
-        .metric-grid{
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          margin-top: 12px;
-        }
-        .metric{
-          border-radius: 16px;
-          border: 1px solid rgba(148,163,184,0.14);
-          background: rgba(2,6,23,0.55);
-          padding: 12px;
-        }
-        .metric .k{ color:#94a3b8; font-weight:900; font-size: 12px; }
-        .metric .v{ margin-top:6px; font-size: 20px; font-weight:1100; color:#e5e7eb; }
-
-        .table-wrap{
-          margin-top: 14px;
-          border-radius: 20px;
-          border: 1px solid rgba(59,130,246,0.22);
-          overflow:hidden;
-          background: rgba(2,6,23,0.65);
-        }
-        table{
-          width:100%;
-          border-collapse: collapse;
-        }
-        th, td{
-          padding: 12px 10px;
-          border-bottom: 1px solid rgba(59,130,246,0.14);
-          text-align:left;
-          font-size: 12px;
-          font-weight: 900;
-          color:#e5e7eb;
-          vertical-align: middle;
-        }
-        th{
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          color:#94a3b8;
-          font-size: 11px;
-          background: rgba(15,23,42,0.75);
-        }
-        .status{
-          display:inline-flex;
-          align-items:center;
-          gap: 8px;
-          padding: 5px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.55);
-          color:#cbd5e1;
-          font-weight: 1100;
-        }
-        .dot{
-          width: 8px;
-          height: 8px;
-          border-radius: 999px;
-          background: rgba(148,163,184,0.55);
-        }
-        .dot.green{ background: rgba(34,197,94,0.95); }
-        .dot.red{ background: rgba(248,113,113,0.95); }
-        .actions{
-          display:flex;
-          gap: 8px;
-        }
-        .btn{
-          border-radius: 999px;
-          padding: 8px 10px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.55);
-          color:#e5e7eb;
-          font-weight: 1100;
-          cursor:pointer;
-          font-size: 12px;
-        }
-        .btn.danger{
-          border-color: rgba(248,113,113,0.28);
-          color:#fecaca;
-        }
-
-        .modal{
-          position: fixed;
-          inset: 0;
-          background: rgba(15,23,42,0.55);
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          padding: 18px;
-          z-index: 9999;
-        }
-        .modal-card{
-          width:100%;
-          max-width: 640px;
-          background: rgba(2,6,23,0.95);
-          border: 1px solid rgba(59,130,246,0.28);
-          border-radius: 20px;
-          padding: 14px;
-          box-shadow: 0 25px 70px rgba(0,0,0,0.35);
-        }
-        .tax-zone{
-          display:grid;
-          grid-template-columns: 1fr 1.8fr;
-          gap: 14px;
-        }
-        .inventory-top{
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-          gap: 10px;
-          flex-wrap: wrap;
-          margin-bottom: 10px;
-        }
-        .inventory-tools{
-          display:flex;
-          gap: 10px;
-          align-items:center;
-          flex-wrap: wrap;
-        }
-        .integrity{
-          margin-top: 12px;
-          border: 1px solid rgba(148,163,184,0.18);
-          border-radius: 16px;
-          padding: 10px;
-          background: rgba(2,6,23,0.5);
-        }
-        .integrity h4{
-          margin:0;
-          font-size: 12px;
-          color:#e5e7eb;
-          font-weight:1100;
-        }
-        .integrity p{
-          margin:6px 0 0;
-          color:#94a3b8;
-          font-weight:800;
-          font-size: 12px;
-        }
-        .grade-zone{
-          display:grid;
-          grid-template-columns: 1.6fr 1fr;
-          gap: 14px;
-          align-items:start;
-        }
-        .grade-stack{
-          display:grid;
-          gap: 12px;
-        }
-        .grade-card{
-          border-radius: 20px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.65);
-          padding: 14px;
-          box-shadow: 0 25px 70px rgba(0,0,0,0.25);
-        }
-        .grade-head{
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-          gap: 12px;
-        }
-        .grade-title{
-          display:flex;
-          align-items:center;
-          gap: 10px;
-        }
-        .grade-badge{
-          width: 40px;
-          height: 40px;
-          border-radius: 16px;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          font-weight: 1100;
-          color:#0b1120;
-        }
-        .grade-badge.a{ background: linear-gradient(120deg, #22d3ee, #0ea5e9); }
-        .grade-badge.b{ background: linear-gradient(120deg, #fde68a, #f59e0b); }
-        .grade-badge.c{ background: linear-gradient(120deg, #cbd5e1, #64748b); color:#020617; }
-        .grade-card h3{ margin:0; font-weight:1100; color:#e5e7eb; font-size: 14px; }
-        .grade-card p{ margin:6px 0 0; font-weight:800; color:#94a3b8; font-size: 12px; }
-        .slider-row{
-          margin-top: 12px;
-          display:grid;
-          grid-template-columns: 1fr 160px;
-          gap: 10px;
-          align-items:center;
-        }
-        .slider-row label{
-          color:#cbd5e1;
-          font-weight: 900;
-          font-size: 12px;
-        }
-        .slider{
-          width:100%;
-        }
-        .pill2{
-          justify-self:end;
-          font-size: 12px;
-          font-weight: 1100;
-          padding: 5px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.55);
-          color:#e5e7eb;
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        }
-        .preview{
-          border-radius: 20px;
-          border: 1px solid rgba(59,130,246,0.22);
-          background: rgba(2,6,23,0.65);
-          padding: 14px;
-          box-shadow: 0 25px 70px rgba(0,0,0,0.25);
-        }
-        .preview h3{ margin:0; font-weight:1100; color:#e5e7eb; font-size: 14px; }
-        .preview p{ margin:6px 0 0; font-weight:800; color:#94a3b8; font-size: 12px; }
-        .profile-mock{
-          margin-top: 12px;
-          border-radius: 18px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(15,23,42,0.75);
-          padding: 12px;
-          display:flex;
-          gap: 12px;
-          align-items:center;
-        }
-        .avatar{
-          width: 52px;
-          height: 52px;
-          border-radius: 18px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.55);
-          display:flex;
-          align-items:center;
-          justify-content:center;
-          font-weight: 1100;
-          color:#e5e7eb;
-        }
-        .mock-meta{
-          flex:1;
-          min-width:0;
-        }
-        .mock-meta .name{
-          font-weight:1100;
-          color:#e5e7eb;
-          font-size: 13px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .mock-meta .sub{
-          margin-top:4px;
-          color:#94a3b8;
-          font-weight:800;
-          font-size: 12px;
-        }
-        .badge-pill{
-          display:inline-flex;
-          align-items:center;
-          gap: 8px;
-          padding: 6px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.55);
-          color:#e5e7eb;
-          font-weight: 1100;
-          font-size: 12px;
-          margin-top: 8px;
-        }
-        .boost-bar{
-          margin-top: 10px;
-          height: 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(148,163,184,0.14);
-          background: rgba(2,6,23,0.45);
-          overflow:hidden;
-        }
-        .boost-fill{
-          height: 100%;
-          background: linear-gradient(120deg, #22d3ee, #0ea5e9);
-        }
-        .footer-bar{
-          position: sticky;
-          bottom: 0;
-          margin-top: 14px;
-          border-radius: 18px;
-          border: 1px solid rgba(148,163,184,0.18);
-          background: rgba(2,6,23,0.78);
-          padding: 12px;
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-          gap: 12px;
-          backdrop-filter: blur(10px);
-        }
-        .footer-msg{
-          color:#94a3b8;
-          font-weight: 800;
-          font-size: 12px;
-        }
-        .footer-actions{
-          display:flex;
-          gap: 10px;
-          align-items:center;
-        }
-
-        @media (max-width: 980px){
-          .cc-shell{ flex-direction:column; }
-          .cc-sidebar{ width:100%; }
-          .zone{ grid-template-columns: 1fr; }
-          .tax-zone{ grid-template-columns: 1fr; }
-          .grade-zone{ grid-template-columns: 1fr; }
-        }
-
-        .cc-shell-light{
-          background: linear-gradient(180deg, #fff7ed 0%, #f8fafc 45%, #ffffff 100%);
-          color: #111827;
-        }
-        .cc-shell-light .cc-sidebar{
-          background: #ffffff;
-          border-right: 1px solid #e5e7eb;
-        }
-        .cc-shell-light .cc-brand h3{ color: #111827; }
-        .cc-shell-light .cc-brand p{ color: #64748b; }
-        .cc-shell-light .cc-nav{
-          background: #f8fafc;
-          border-color: #e5e7eb;
-        }
-        .cc-shell-light .cc-nav button{
-          color: #475569;
-        }
-        .cc-shell-light .cc-nav button.active{
-          border-color: rgba(249,115,22,0.45);
-          background: linear-gradient(120deg, rgba(249,115,22,0.12), rgba(255,255,255,0.95));
-          color: #c2410c;
-        }
-        .cc-shell-light .pill{
-          background: #fff;
-          border-color: #e5e7eb;
-          color: #64748b;
-        }
-        .cc-shell-light .cc-header{
-          background: #ffffff;
-          border-bottom: 1px solid #e5e7eb;
-        }
-        .cc-shell-light .cc-header h2{ color: #111827; }
-        .cc-shell-light .cc-header .sub{ color: #64748b; }
-        .cc-shell-light .icon-btn, .cc-shell-light .logout-btn{
-          background: #f8fafc;
-          border-color: #e5e7eb;
-          color: #334155;
-        }
-        .cc-shell-light .card{
-          background: #ffffff;
-          border-color: #e5e7eb;
-          box-shadow: 0 12px 40px rgba(15,23,42,0.06);
-          text-align: left;
-        }
-        .cc-shell-light .card h3{ color: #111827; }
-        .cc-shell-light .card p{ color: #64748b; }
-        .cc-shell-light .metric{
-          background: #f8fafc;
-          border-color: #e5e7eb;
-        }
-        .cc-shell-light .metric .k{ color: #64748b; }
-        .cc-shell-light .metric .v{ color: #111827; }
-        .cc-shell-light .table-wrap{
-          background: #ffffff;
-          border-color: #fed7aa;
-        }
-        .cc-shell-light th{
-          background: #fff7ed;
-          color: #9a3412;
-          border-bottom-color: #e5e7eb;
-        }
-        .cc-shell-light td{
-          color: #334155;
-          border-bottom-color: #f1f5f9;
-        }
-        .cc-shell-light .input, .cc-shell-light .select{
-          background: #ffffff;
-          border-color: #e5e7eb;
-          color: #111827;
-        }
-        .cc-shell-light .btn{
-          background: #f8fafc;
-          border-color: #e5e7eb;
-          color: #334155;
-        }
-        .cc-shell-light .primary{
-          background: linear-gradient(120deg, #fb923c, #f97316);
-          color: #fff;
-        }
-        .cc-shell-light .status{
-          background: #f8fafc;
-          border-color: #e5e7eb;
-          color: #334155;
-        }
-        .cc-shell-light .integrity,
-        .cc-shell-light .grade-card,
-        .cc-shell-light .preview,
-        .cc-shell-light .profile-mock,
-        .cc-shell-light .badge-pill,
-        .cc-shell-light .footer-bar,
-        .cc-shell-light .modal-card{
-          background: #ffffff;
-          border-color: #e5e7eb;
-          box-shadow: 0 12px 40px rgba(15,23,42,0.06);
-          text-align: left;
-        }
-        .cc-shell-light .grade-card h3,
-        .cc-shell-light .preview h3,
-        .cc-shell-light .integrity h4,
-        .cc-shell-light .mock-meta .name{
-          color: #111827;
-          font-size: 15px;
-        }
-        .cc-shell-light .grade-card p,
-        .cc-shell-light .preview p,
-        .cc-shell-light .integrity p,
-        .cc-shell-light .mock-meta .sub,
-        .cc-shell-light .footer-msg{
-          color: #475569;
-          font-size: 13px;
-          font-weight: 800;
-        }
-        .cc-shell-light .slider-row label{
-          color: #334155;
-          font-size: 13px;
-        }
-        .cc-shell-light .pill2{
-          background: #f8fafc;
-          border-color: #e5e7eb;
-          color: #334155;
-          font-size: 13px;
-        }
-        .cc-shell-light .cc-content{
-          font-size: 14px;
-          color: #1f2937;
-        }
-        .cc-shell-light .cc-content .card *,
-        .cc-shell-light .cc-content .table-wrap *,
-        .cc-shell-light .cc-content .integrity *,
-        .cc-shell-light .cc-content .grade-card *,
-        .cc-shell-light .cc-content .preview *,
-        .cc-shell-light .cc-content .profile-mock *,
-        .cc-shell-light .cc-content .badge-pill *,
-        .cc-shell-light .cc-content .footer-bar *,
-        .cc-shell-light .cc-content .modal-card *{
-          color: #1f2937 !important;
-          font-size: 14px;
-        }
-        .cc-shell-light .cc-content .card h3,
-        .cc-shell-light .cc-content .grade-card h3,
-        .cc-shell-light .cc-content .preview h3,
-        .cc-shell-light .cc-content .integrity h4{
-          font-size: 16px !important;
-          font-weight: 1100 !important;
-          color: #111827 !important;
-        }
-        .cc-shell-light .cc-content .card p,
-        .cc-shell-light .cc-content .preview p,
-        .cc-shell-light .cc-content .integrity p{
-          font-size: 13px !important;
-          font-weight: 800 !important;
-          color: #334155 !important;
-        }
-        .cc-shell-light .cc-content .grid,
-        .cc-shell-light .cc-content .row2,
-        .cc-shell-light .cc-content .row3,
-        .cc-shell-light .cc-content .zone,
-        .cc-shell-light .cc-content .tax-zone,
-        .cc-shell-light .cc-content .grade-zone{
-          align-items: start;
-        }
-        .cc-shell-light .table-wrap td{
-          font-size: 13px;
-          color: #1f2937;
-        }
-        .cc-shell-light .table-wrap th{
-          font-size: 12px;
-          font-weight: 900;
-        }
-        .cc-shell-light .research-bar{
-          height: 10px;
-          border-radius: 999px;
-          background: #f1f5f9;
-          overflow: hidden;
-        }
-        .cc-shell-light .research-bar-fill{
-          display:block;
-          height:100%;
-          background: linear-gradient(90deg, #fb923c, #f97316);
-          border-radius: 999px;
-        }
-      `}</style>
-
-      <aside className="cc-sidebar">
-        <div className="cc-brand">
-          <div className="cc-badge">OM</div>
-          <div>
-            <h3>Operational Manager</h3>
-            <p className="cc-role">Catalog, rates &amp; live operations</p>
+        <aside className="cc-sidebar">
+          <div className="cc-brand">
+            <div className="cc-badge">OM</div>
+            <div><h3>Operational Manager</h3><p className="cc-role">Catalog, rates &amp; live operations</p></div>
           </div>
-        </div>
-
-        <div className="cc-nav" role="navigation" aria-label="Admin2 navigation">
-          <button type="button" className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>
-            <span>Overview</span>
-            <span className="pill">Summary</span>
-          </button>
-          <button type="button" className={tab === 'category' ? 'active' : ''} onClick={() => setTab('category')}>
-            <span>Category</span>
-          </button>
-          <button type="button" className={tab === 'services' ? 'active' : ''} onClick={() => setTab('services')}>
-            <span>Services</span>
-            <span className="pill">Command</span>
-          </button>
-          <button type="button" className={tab === 'requests' ? 'active' : ''} onClick={() => setTab('requests')}>
-            <span>Requests</span>
-            <span className="pill">{pendingCount}</span>
-          </button>
-          <button type="button" className={tab === 'research' ? 'active' : ''} onClick={() => setTab('research')}>
-            <span>Research</span>
-            <span className="pill">Rates</span>
-          </button>
-          <button type="button" className={tab === 'grading' ? 'active' : ''} onClick={() => setTab('grading')}>
-            <span>Grading</span>
-            <span className="pill">A/B/C</span>
-          </button>
-        </div>
-
-        <div style={{ marginTop: 'auto', color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>
-          Operational Manager · sidebar navigation
-        </div>
-      </aside>
-
-      <div className="cc-main">
-        <div className="cc-header">
-          <div>
-            <h2>
-              {tab === 'overview'
-                ? 'Dashboard overview'
-                : tab === 'services'
-                  ? 'Services Command Center'
-                  : tab === 'category'
-                    ? 'Category'
-                    : tab === 'requests'
-                      ? 'Requests'
-                      : tab === 'research'
-                        ? 'Market Research'
-                        : 'Grading'}
-            </h2>
-            <div className="sub">Operational Manager workspace · authorized catalog &amp; rate changes</div>
+          <div className="cc-nav">
+            <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><span>Overview</span><span className="pill">Summary</span></button>
+            <button className={tab === 'category' ? 'active' : ''} onClick={() => setTab('category')}><span>Category</span></button>
+            <button className={tab === 'services' ? 'active' : ''} onClick={() => setTab('services')}><span>Services</span><span className="pill">Command</span></button>
+            <button className={tab === 'requests' ? 'active' : ''} onClick={() => setTab('requests')}><span>Requests</span><span className="pill">{pendingCount}</span></button>
+            <button className={tab === 'research' ? 'active' : ''} onClick={() => setTab('research')}><span>Research</span><span className="pill">Rates</span></button>
+            <button className={tab === 'grading' ? 'active' : ''} onClick={() => setTab('grading')}><span>Grading</span><span className="pill">A/B/C</span></button>
+            <button className={tab === 'demand' ? 'active' : ''} onClick={() => setTab('demand')}><span>Demand Prediction</span><span className="pill">Novelty</span></button>
           </div>
-          <div className="cc-actions">
-            <button type="button" className="icon-btn" title="Notifications" onClick={() => setTab('requests')}>
-              <i className="fas fa-bell" />
-              {pendingCount > 0 && <span className="notif">{pendingCount}</span>}
-            </button>
-            <button
-              type="button"
-              className="logout-btn"
-              onClick={() => {
-                logout();
-                window.location.hash = 'login';
-              }}
-            >
-              Logout
-            </button>
-          </div>
-        </div>
+          <div style={{ marginTop: 'auto', color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>Operational Manager · sidebar navigation</div>
+        </aside>
 
-      {error && <div style={{ marginBottom: 10, color: '#991b1b', fontWeight: 900 }}>{error}</div>}
-
-        <div className="cc-content">
-          {error && <div style={{ marginBottom: 10, color: '#b91c1c', fontWeight: 900 }}>{error}</div>}
-
-          {tab === 'overview' && (
-            <>
-              <div className="zone">
-                <div className="card">
-                  <h3>Operational snapshot</h3>
-                  <p>Read-only totals from the live catalog.</p>
-                  <div className="metric-grid">
-                    <div className="metric">
-                      <div className="k">Total services</div>
-                      <div className="v">{metrics.total}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="k">Active services</div>
-                      <div className="v">{metrics.activeCount}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="k">Unique categories</div>
-                      <div className="v">{metrics.uniqueCats}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="k">Research coverage</div>
-                      <div className="v">{metrics.coveragePct}%</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="card">
-                  <h3>Market research (dummy)</h3>
-                  <p>Sample regional demand — placeholder data for UI research.</p>
-                  <div style={{ marginTop: 12 }}>
-                    {DUMMY_RESEARCH_ROWS.map((row) => (
-                      <div key={row.region} style={{ marginBottom: 12 }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            gap: 10,
-                            fontSize: 12,
-                            fontWeight: 800,
-                            color: '#334155'
-                          }}
-                        >
-                          <span>{row.region}</span>
-                          <span>
-                            {row.avgMin.toLocaleString()}–{row.avgMax.toLocaleString()} LKR · {row.demandPct}% demand
-                          </span>
-                        </div>
-                        <div className="research-bar" aria-hidden="true">
-                          <span
-                            className="research-bar-fill"
-                            style={{ width: `${(row.demandPct / maxDummyDemand) * 100}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="zone">
-                <div className="card">
-                  <h3>Categories in use</h3>
-                  <p>Service counts per category (from registered services).</p>
-                  <div className="table-wrap" style={{ marginTop: 12 }}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Category</th>
-                          <th>Services</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {categoryServiceCounts.length ? (
-                          categoryServiceCounts.map(([name, count]) => (
-                            <tr key={name}>
-                              <td>{name}</td>
-                              <td>{count}</td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan={2}>
-                              No services yet — add services under the Services tab.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div className="card">
-                  <h3>Grading tiers</h3>
-                  <p>Current saved thresholds (read-only here; edit under Grading).</p>
-                  <ul style={{ margin: '12px 0 0', paddingLeft: 18, color: '#334155', fontWeight: 800, fontSize: 13, lineHeight: 1.7 }}>
-                    {(['A', 'B', 'C']).map((k) => {
-                      const g = gradingSaved[k];
-                      const y = g ? Number(g.minYears) : 0;
-                      const line = g?.label
-                        ? `${k} — ${g.label}`
-                        : `${k} — Experience ≥ ${Number.isFinite(y) ? y : 0} years`;
-                      return <li key={k}>{line}</li>;
-                    })}
-                  </ul>
-                </div>
-              </div>
-
-              <div className="card" style={{ marginTop: 14 }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                  <div>
-                    <h3 style={{ margin: 0 }}>Service catalog</h3>
-                    <p style={{ margin: '6px 0 0' }}>Read-only list — sort for review only.</p>
-                  </div>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 900, color: '#475569' }}>
-                    Sort services
-                    <select
-                      className="select"
-                      style={{ width: 200 }}
-                      value={overviewSort}
-                      onChange={(e) => setOverviewSort(e.target.value)}
-                    >
-                      <option value="title">Name (A–Z)</option>
-                      <option value="category">Category (A–Z)</option>
-                      <option value="status">Status (active first)</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="table-wrap" style={{ marginTop: 12 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Service</th>
-                        <th>Category</th>
-                        <th>Rate (min–max)</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {overviewServicesSorted.length ? (
-                        overviewServicesSorted.map((s) => (
-                          <tr key={s._id}>
-                            <td>{s.title}</td>
-                            <td>{s.category || '—'}</td>
-                            <td>
-                              {Number(s.minRatePerHour) || 0}–{Number(s.maxRatePerHour) || 0} {s.currency || 'LKR'}
-                            </td>
-                            <td>
-                              <span className="status">
-                                <span className={`dot ${s.active !== false ? 'green' : 'red'}`} />
-                                {s.active !== false ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={4}>No services loaded yet.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
-
-          {tab === 'services' && (
-            <>
-              <div className="zone">
-                <div className="card">
-                  <h3>{editingService ? 'Edit service' : 'Register one service'}</h3>
-                  <p>Name, description, hourly rate band, and operational status (one service at a time).</p>
-                  <div className="grid">
-                    <div className="row2">
-                      <div className="with-error" style={{ width: '100%' }}>
-                        {createFormTouched.title && (
-                          <div className={`Validation-msg ${validateServiceField('title', createForm.title) ? 'error' : 'success'}`}>
-                            {validateServiceField('title', createForm.title) || 'Looks good!'}
-                          </div>
-                        )}
-                        <input className={`input ${getSvcValidationClass('title', createForm.title)}`} value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} onBlur={() => handleSvcBlur('title')} placeholder="Service name" />
-                      </div>
-                      <select className="select" value={createForm.category} onChange={(e) => setCreateForm((f) => ({ ...f, category: e.target.value }))}>
-                        <option value="">Select category…</option>
-                        {catalogOptions.categories.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="with-error" style={{ width: '100%' }}>
-                      {createFormTouched.description && (
-                        <div className={`Validation-msg ${validateServiceField('description', createForm.description) ? 'error' : 'success'}`}>
-                          {validateServiceField('description', createForm.description) || 'Looks good!'}
-                        </div>
-                      )}
-                      <textarea
-                        className={`input ${getSvcValidationClass('description', createForm.description)}`}
-                        style={{ minHeight: 72, resize: 'vertical' }}
-                        value={createForm.description}
-                        onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
-                        onBlur={() => handleSvcBlur('description')}
-                        placeholder="Service description"
-                      />
-                    </div>
-                    <div style={{ color: '#94a3b8', fontWeight: 900, fontSize: 12 }}>Hourly rate band (min – max)</div>
-                    <DualThumbRateSlider
-                      domainMin={serviceCreateDomain.domainMin}
-                      domainMax={serviceCreateDomain.domainMax}
-                      min={Number(createForm.minRatePerHour) || 0}
-                      max={Number(createForm.maxRatePerHour) || 0}
-                      onChange={({ min, max }) =>
-                        setCreateForm((f) => ({
-                          ...f,
-                          minRatePerHour: min,
-                          maxRatePerHour: max
-                        }))
-                      }
-                      currency={createForm.currency || 'LKR'}
-                      disabled={creating}
-                    />
-                    <div className="row2">
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => setCreateForm((f) => ({ ...f, active: !f.active }))}
-                      >
-                        Status: {createForm.active ? 'Active' : 'Inactive'}
-                      </button>
-                      {editingService ? (
-                        <button type="button" className="btn" onClick={resetServiceForm} disabled={creating}>
-                          Cancel edit
-                        </button>
-                      ) : (
-                        <span style={{ color: '#64748b', fontSize: 12, fontWeight: 800 }}>Inactive hides this service from the public catalog.</span>
-                      )}
-                    </div>
-                    <button type="button" className="primary" disabled={creating} onClick={createServiceRow}>
-                      {creating ? 'Saving…' : editingService ? 'Update service' : 'Register service'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="card">
-                  <h3>Live Metrics</h3>
-                  <p>System grades and efficiency stats</p>
-                  <div className="metric-grid">
-                    <div className="metric">
-                      <div className="k">Total services</div>
-                      <div className="v">{metrics.total}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="k">Active services</div>
-                      <div className="v">{metrics.activeCount}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="k">Unique categories</div>
-                      <div className="v">{metrics.uniqueCats}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="k">Market value coverage</div>
-                      <div className="v">{metrics.coveragePct}%</div>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: 10, color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>
-                    Tip: Use the Research tab to add missing per-hour values.
-                  </div>
-                </div>
-              </div>
-
-              <div className="table-wrap">
-                <div style={{ padding: 12, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontWeight: 1100, color: '#e5e7eb' }}>Service Inventory Table</div>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    <input className="input" style={{ width: 220 }} value={svcSearch} onChange={(e) => setSvcSearch(e.target.value)} placeholder="Search…" />
-                    <select className="select" style={{ width: 220 }} value={svcCategory} onChange={(e) => setSvcCategory(e.target.value)}>
-                      <option value="">All categories</option>
-                      {catalogOptions.categories.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                    <select className="select" style={{ width: 160 }} value={svcStatus} onChange={(e) => setSvcStatus(e.target.value)}>
-                      <option value="all">All</option>
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
-                  </div>
-                </div>
-
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Service</th>
-                      <th>Category</th>
-                      <th>Duration</th>
-                      <th>Skill</th>
-                      <th>Market/hr</th>
-                      <th>Status</th>
-                      <th style={{ width: 210 }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleServices.length ? (
-                      visibleServices.map((s) => {
-                        const key = `${String(s.category || '').toLowerCase()}::${String(s.title || '').toLowerCase()}`;
-                        const mr = marketMap.get(key);
-                        const isActive = s.active !== false;
-                        return (
-                          <tr key={s._id}>
-                            <td style={{ fontWeight: 1100 }}>{s.title}</td>
-                            <td style={{ color: '#cbd5e1' }}>{s.category || '-'}</td>
-                            <td style={{ color: '#cbd5e1' }}>{Number(s.durationMinutes || 0) || 60} min</td>
-                            <td style={{ color: '#cbd5e1' }}>{s.skillLevel || 'Intermediate'}</td>
-                            <td style={{ color: '#cbd5e1' }}>
-                              {mr ? `${mr.currency || 'LKR'} ${mr.minRatePerHour}–${mr.maxRatePerHour}` : <span style={{ color: '#94a3b8' }}>Not set</span>}
-                            </td>
-                            <td>
-                              <span className="status">
-                                <span className={`dot ${isActive ? 'green' : 'red'}`} />
-                                {isActive ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="actions">
-                                <button type="button" className="btn" onClick={() => openEditService(s)}>
-                                  Edit
-                                </button>
-                                <button type="button" className="btn danger" onClick={() => removeService(s)} disabled={saving}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    ) : (
-                      <tr>
-                        <td colSpan={7} style={{ color: '#94a3b8', fontWeight: 800 }}>
-                          No services found.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-
-          {tab === 'category' && (
-            <div className="tax-zone">
-              <div>
-                <div className="card">
-                  <h3>Category Creation</h3>
-                  <p>Create categories and set active or inactive for the public catalog.</p>
-                  <div className="grid">
-                    <input
-                      className="input"
-                      value={categoryForm.name}
-                      onChange={(e) => setCategoryForm((f) => ({ ...f, name: e.target.value }))}
-                      placeholder="Category name"
-                    />
-                    <textarea
-                      className="input"
-                      style={{ minHeight: 90, resize: 'vertical' }}
-                      value={categoryForm.description}
-                      onChange={(e) => setCategoryForm((f) => ({ ...f, description: e.target.value }))}
-                      placeholder="Short description"
-                    />
-                    <div className="row2">
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => setCategoryForm((f) => ({ ...f, active: !f.active }))}
-                      >
-                        Status: {categoryForm.active ? 'Active' : 'Inactive'}
-                      </button>
-                    </div>
-                    <button type="button" className="primary" onClick={createCategoryRow} disabled={creatingCategory}>
-                      {creatingCategory ? 'Creating…' : 'Create Category'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="integrity">
-                  <h4>System Integrity Panel</h4>
-                  <p>Total categories: {categories.length}</p>
-                  <p>Duplicate warnings: {duplicateNames.length}</p>
-                  {duplicateNames.length ? (
-                    <p style={{ color: '#fecaca' }}>Duplicates: {duplicateNames.join(', ')}</p>
-                  ) : (
-                    <p style={{ color: '#bbf7d0' }}>No duplicate category names found.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="inventory-top">
-                  <div>
-                    <h3>Category Inventory Table</h3>
-                    <p>High-density list with identifiers and status badges</p>
-                  </div>
-                  <div className="inventory-tools">
-                    <input className="input" style={{ width: 220 }} value={taxSearch} onChange={(e) => setTaxSearch(e.target.value)} placeholder="Search categories…" />
-                    <select className="select" style={{ width: 160 }} value={taxFilter} onChange={(e) => setTaxFilter(e.target.value)}>
-                      <option value="all">All</option>
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="table-wrap" style={{ marginTop: 0 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Category</th>
-                        <th>ID</th>
-                        <th>Description</th>
-                        <th>Status</th>
-                        <th style={{ width: 180 }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleCategories.length ? (
-                        visibleCategories.map((c) => (
-                          <tr key={c.id}>
-                            <td style={{ fontWeight: 1100 }}>{c.name}</td>
-                            <td style={{ color: '#cbd5e1' }}>{c.code}</td>
-                            <td style={{ color: '#cbd5e1' }}>{c.description || '-'}</td>
-                            <td>
-                              <span className="status">
-                                <span className={`dot ${c.active ? 'green' : 'red'}`} />
-                                {c.active ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="actions">
-                                <button type="button" className="btn" onClick={() => setEditingCategory(c)}>
-                                  Edit
-                                </button>
-                                <button type="button" className="btn" onClick={() => toggleCategoryStatus(c)} disabled={saving}>
-                                  Toggle
-                                </button>
-                                <button type="button" className="btn danger" onClick={() => removeCategory(c)} disabled={saving}>
-                                  Remove
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={5} style={{ color: '#94a3b8', fontWeight: 800 }}>
-                            No categories found.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {categoryToDelete && (
-                <div className="modal">
-                  <div className="modal-card">
-                    <h3 style={{ margin: 0, fontWeight: 1100, color: '#e5e7eb', fontSize: 18 }}>Confirm Deletion</h3>
-                    <p style={{ marginTop: 10, color: '#fca5a5', fontWeight: 800 }}>
-                      Are you sure you want to delete the category <strong>&quot;{categoryToDelete.name}&quot;</strong>?<br/><br/>
-                      <span style={{ color: '#ef4444' }}>Warning:</span> This will irreversibly remove all services under this category and freeze any suppliers assigned to it.
-                    </p>
-                    <div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                      <button type="button" className="btn" onClick={() => setCategoryToDelete(null)} disabled={saving}>
-                        Cancel
-                      </button>
-                      <button type="button" className="btn danger" onClick={confirmRemoveCategory} disabled={saving}>
-                        {saving ? 'Deleting...' : 'Delete Category'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+        <div className="cc-main">
+          <div className="cc-header">
+            <div>
+              <h2>{tab === 'overview' ? 'Dashboard overview' : tab === 'services' ? 'Services Command Center' : tab === 'category' ? 'Category' : tab === 'requests' ? 'Requests' : tab === 'research' ? 'Market Research' : tab === 'demand' ? 'Service Demand Prediction' : 'Grading'}</h2>
+              <div className="sub">Operational Manager workspace · authorized catalog &amp; rate changes</div>
             </div>
-          )}
-
-      {tab === 'requests' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-              <div>
-                <h3>Incoming Requests</h3>
-                <p>Each request routes to Category or Service creation</p>
-              </div>
-              <div style={{ color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>Count: {requests.length}</div>
-            </div>
-
-            <div className="table-wrap" style={{ marginTop: 12 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>From</th>
-                    <th>Category</th>
-                    <th>Services</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {requests.length ? (
-                    requests.map((req) => (
-                      <tr key={req._id} style={{ cursor: 'pointer' }} onClick={() => openRequestEditor(req)}>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              goToRequestTarget(req);
-                            }}
-                            title="Go to related page"
-                          >
-                            {requestType(req) === 'category' ? 'Category' : 'Service'}
-                          </button>
-                        </td>
-                        <td style={{ color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>{req.supplierName || 'Admin'}</td>
-                        <td style={{ fontWeight: 1100 }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            {req.category || '-'}
-                            <span style={{ padding: '1px 5px', borderRadius: 999, border: '1px solid rgba(245,158,11,0.55)', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontWeight: 1100, fontSize: 9 }}>NEW</span>
-                          </span>
-                        </td>
-                        <td style={{ color: '#cbd5e1' }}>
-                          {(req.services || []).map((svc, si) => (
-                            <span key={si} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 8 }}>
-                              {svc}
-                              <span style={{ padding: '1px 4px', borderRadius: 999, border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.12)', color: '#fbbf24', fontWeight: 1100, fontSize: 8 }}>NEW</span>
-                            </span>
-                          ))}
-                          {!(req.services || []).length && '-'}
-                        </td>
-                        <td>
-                          {(() => {
-                            const b = requestStatusBadge(req.status);
-                            return (
-                              <span
-                                style={{
-                                  display: 'inline-block',
-                                  padding: '4px 10px',
-                                  borderRadius: 999,
-                                  fontWeight: 900,
-                                  fontSize: 12,
-                                  background: b.bg,
-                                  color: b.color,
-                                  border: b.border
-                                }}
-                              >
-                                {b.label}
-                              </span>
-                            );
-                          })()}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} style={{ color: '#94a3b8', fontWeight: 800 }}>
-                        No requests.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div className="cc-actions">
+              <button className="icon-btn" onClick={() => setTab('requests')}><i className="fas fa-bell" />{pendingCount > 0 && <span className="notif">{pendingCount}</span>}</button>
+              <button className="logout-btn" onClick={() => { logout(); window.location.hash = 'login'; }}>Logout</button>
             </div>
           </div>
-
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-              <div>
-                <h3>Request Detail</h3>
-                <p>Admin1 approval — set each service rate on the slider, save, then publish</p>
+          {error && <div style={{ marginBottom: 10, color: '#991b1b', fontWeight: 900 }}>{error}</div>}
+          <div className="cc-content">
+            {tab === 'overview' && (
+              <>
+                <div className="zone">
+                  <div className="card"><h3>Operational snapshot</h3><p>Read-only totals from the live catalog.</p><div className="metric-grid"><div className="metric"><div className="k">Total services</div><div className="v">{metrics.total}</div></div><div className="metric"><div className="k">Active services</div><div className="v">{metrics.activeCount}</div></div><div className="metric"><div className="k">Unique categories</div><div className="v">{metrics.uniqueCats}</div></div><div className="metric"><div className="k">Research coverage</div><div className="v">{metrics.coveragePct}%</div></div></div></div>
+                  <div className="card"><h3>Market research (dummy)</h3><p>Sample regional demand — placeholder data for UI research.</p><div style={{ marginTop: 12 }}>{DUMMY_RESEARCH_ROWS.map((row) => (<div key={row.region} style={{ marginBottom: 12 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, fontWeight: 800, color: '#334155' }}><span>{row.region}</span><span>{row.avgMin.toLocaleString()}–{row.avgMax.toLocaleString()} LKR · {row.demandPct}% demand</span></div><div className="research-bar"><span className="research-bar-fill" style={{ width: `${(row.demandPct / maxDummyDemand) * 100}%` }} /></div></div>))}</div></div>
+                </div>
+                <div className="zone">
+                  <div className="card"><h3>Categories in use</h3><p>Service counts per category (from registered services).</p><div className="table-wrap"><table><thead><tr><th>Category</th><th>Services</th></tr></thead><tbody>{categoryServiceCounts.length ? categoryServiceCounts.map(([name, count]) => (<tr key={name}><td>{name}</td><td>{count}</td></tr>)) : (<tr><td colSpan={2}>No services yet — add services under the Services tab.</td></tr>)}</tbody></table></div></div>
+                  <div className="card"><h3>Grading tiers</h3><p>Current saved thresholds (read-only here; edit under Grading).</p><ul style={{ margin: '12px 0 0', paddingLeft: 18, color: '#334155', fontWeight: 800, fontSize: 13, lineHeight: 1.7 }}>{['A','B','C'].map((k) => { const g = gradingSaved[k]; const y = g ? Number(g.minYears) : 0; const line = g?.label ? `${k} — ${g.label}` : `${k} — Experience ≥ ${Number.isFinite(y) ? y : 0} years`; return <li key={k}>{line}</li>; })}</ul></div>
+                </div>
+                <div className="card"><div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><div><h3>Service catalog</h3><p>Read-only list — sort for review only.</p></div><label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 900, color: '#475569' }}>Sort services<select className="select" style={{ width: 200 }} value={overviewSort} onChange={(e) => setOverviewSort(e.target.value)}><option value="title">Name (A–Z)</option><option value="category">Category (A–Z)</option><option value="status">Status (active first)</option></select></label></div><div className="table-wrap"><table><thead><tr><th>Service</th><th>Category</th><th>Rate (min–max)</th><th>Status</th></tr></thead><tbody>{overviewServicesSorted.length ? overviewServicesSorted.map((s) => (<tr key={s._id}><td>{s.title}</td><td>{s.category || '—'}</td><td>{Number(s.minRatePerHour) || 0}–{Number(s.maxRatePerHour) || 0} {s.currency || 'LKR'}</td><td><span className="status"><span className={`dot ${s.active !== false ? 'green' : 'red'}`} />{s.active !== false ? 'Active' : 'Inactive'}</span></td></tr>)) : (<tr><td colSpan={4}>No services loaded yet.</td></tr>)}</tbody></table></div></div>
+              </>
+            )}
+            {tab === 'services' && (
+              <>
+                <div className="zone">
+                  <div className="card"><h3>{editingService ? 'Edit service' : 'Register one service'}</h3><p>Name, description, hourly rate band, and operational status (one service at a time).</p><div className="grid"><div className="row2"><div className="with-error">{createFormTouched.title && (<div className={`Validation-msg ${validateServiceField('title', createForm.title) ? 'error' : 'success'}`}>{validateServiceField('title', createForm.title) || 'Looks good!'}</div>)}<input className={`input ${getSvcValidationClass('title', createForm.title)}`} value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} onBlur={() => handleSvcBlur('title')} placeholder="Service name" /></div><select className="select" value={createForm.category} onChange={(e) => setCreateForm((f) => ({ ...f, category: e.target.value }))}><option value="">Select category…</option>{catalogOptions.categories.map((c) => (<option key={c} value={c}>{c}</option>))}</select></div><div className="with-error">{createFormTouched.description && (<div className={`Validation-msg ${validateServiceField('description', createForm.description) ? 'error' : 'success'}`}>{validateServiceField('description', createForm.description) || 'Looks good!'}</div>)}<textarea className={`input ${getSvcValidationClass('description', createForm.description)}`} style={{ minHeight: 72, resize: 'vertical' }} value={createForm.description} onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))} onBlur={() => handleSvcBlur('description')} placeholder="Service description" /></div><div style={{ color: 'var(--gray-500)', fontWeight: 900, fontSize: 12 }}>Hourly rate band (min – max)</div><DualThumbRateSlider domainMin={serviceCreateDomain.domainMin} domainMax={serviceCreateDomain.domainMax} min={Number(createForm.minRatePerHour) || 0} max={Number(createForm.maxRatePerHour) || 0} onChange={({ min, max }) => setCreateForm((f) => ({ ...f, minRatePerHour: min, maxRatePerHour: max }))} currency={createForm.currency || 'LKR'} disabled={creating} /><div className="row2"><button className="btn" onClick={() => setCreateForm((f) => ({ ...f, active: !f.active }))}>Status: {createForm.active ? 'Active' : 'Inactive'}</button>{editingService ? (<button className="btn" onClick={resetServiceForm} disabled={creating}>Cancel edit</button>) : (<span style={{ color: 'var(--gray-500)', fontSize: 12, fontWeight: 800 }}>Inactive hides this service from the public catalog.</span>)}</div><button className="primary" disabled={creating} onClick={createServiceRow}>{creating ? 'Saving…' : editingService ? 'Update service' : 'Register service'}</button></div></div>
+                  <div className="card"><h3>Live Metrics</h3><p>System grades and efficiency stats</p><div className="metric-grid"><div className="metric"><div className="k">Total services</div><div className="v">{metrics.total}</div></div><div className="metric"><div className="k">Active services</div><div className="v">{metrics.activeCount}</div></div><div className="metric"><div className="k">Unique categories</div><div className="v">{metrics.uniqueCats}</div></div><div className="metric"><div className="k">Market value coverage</div><div className="v">{metrics.coveragePct}%</div></div></div><div style={{ marginTop: 10, color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>Tip: Use the Research tab to add missing per-hour values.</div></div>
+                </div>
+                <div className="table-wrap"><div style={{ padding: 12, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ fontWeight: 1100, color: 'var(--gray-900)' }}>Service Inventory Table</div><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><input className="input" style={{ width: 220 }} value={svcSearch} onChange={(e) => setSvcSearch(e.target.value)} placeholder="Search…" /><select className="select" style={{ width: 220 }} value={svcCategory} onChange={(e) => setSvcCategory(e.target.value)}><option value="">All categories</option>{catalogOptions.categories.map((c) => (<option key={c} value={c}>{c}</option>))}</select><select className="select" style={{ width: 160 }} value={svcStatus} onChange={(e) => setSvcStatus(e.target.value)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div></div><table><thead><tr><th>Service</th><th>Category</th><th>Duration</th><th>Skill</th><th>Market/hr</th><th>Status</th><th style={{ width: 210 }}>Actions</th></tr></thead><tbody>{visibleServices.length ? visibleServices.map((s) => { const key = `${String(s.category || '').toLowerCase()}::${String(s.title || '').toLowerCase()}`; const mr = marketMap.get(key); const isActive = s.active !== false; return (<tr key={s._id}><td style={{ fontWeight: 1100 }}>{s.title}</td><td>{s.category || '-'}</td><td>{Number(s.durationMinutes || 0) || 60} min</td><td>{s.skillLevel || 'Intermediate'}</td><td>{mr ? `${mr.currency || 'LKR'} ${mr.minRatePerHour}–${mr.maxRatePerHour}` : <span style={{ color: 'var(--gray-500)' }}>Not set</span>}</td><td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderRadius: 999, fontWeight: 900, fontSize: 13, border: isActive ? '1px solid rgba(16,185,129,0.4)' : '1px solid rgba(239,68,68,0.4)', background: isActive ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.08)', color: isActive ? '#059669' : '#dc2626' }}><span style={{ width: 8, height: 8, borderRadius: 999, background: isActive ? '#10b981' : '#ef4444', flexShrink: 0 }} />{isActive ? 'Active' : 'Inactive'}</span></td><td><div className="actions"><button className="btn" onClick={() => openEditService(s)}>Edit</button><button className="btn danger" onClick={() => removeService(s)} disabled={saving}>Remove</button></div></td></tr>); }) : (<tr><td colSpan={7} style={{ color: 'var(--gray-500)', fontWeight: 800 }}>No services found.</td></tr>)}</tbody></table></div>
+              </>
+            )}
+            {tab === 'category' && (
+              <div className="tax-zone">
+                <div><div className="card"><h3>Category Creation</h3><p>Create categories and set active or inactive for the public catalog.</p><div className="grid"><input className="input" value={categoryForm.name} onChange={(e) => setCategoryForm((f) => ({ ...f, name: e.target.value }))} placeholder="Category name" /><textarea className="input" style={{ minHeight: 90, resize: 'vertical' }} value={categoryForm.description} onChange={(e) => setCategoryForm((f) => ({ ...f, description: e.target.value }))} placeholder="Short description" /><div className="row2"><button className="btn" onClick={() => setCategoryForm((f) => ({ ...f, active: !f.active }))}>Status: {categoryForm.active ? 'Active' : 'Inactive'}</button></div><button className="primary" onClick={createCategoryRow} disabled={creatingCategory}>{creatingCategory ? 'Creating…' : 'Create Category'}</button></div></div><div className="integrity"><h4>System Integrity Panel</h4><p>Total categories: {categories.length}</p><p>Duplicate warnings: {duplicateNames.length}</p>{duplicateNames.length ? (<p style={{ color: '#fecaca' }}>Duplicates: {duplicateNames.join(', ')}</p>) : (<p style={{ color: '#bbf7d0' }}>No duplicate category names found.</p>)}</div></div>
+                <div className="card"><div className="inventory-top"><div><h3>Category Inventory Table</h3><p>Filter by category, then by service within that category.</p></div><div className="inventory-tools"><select className="select" style={{ width: 200 }} value={taxSearch} onChange={(e) => { setTaxSearch(e.target.value); setTaxFilter('all'); }}><option value="">All Categories</option>{categories.map((c) => (<option key={c.id} value={c.name}>{c.name}</option>))}</select></div></div><div className="table-wrap"><table><thead><tr><th>Category</th><th>ID</th><th>Description</th><th>Status</th><th style={{ width: 180 }}>Actions</th></tr></thead><tbody>{visibleCategories.length ? visibleCategories.map((c) => (<tr key={c.id}><td style={{ fontWeight: 1100 }}>{c.name}</td><td>{c.code}</td><td>{c.description || '-'}</td><td><span className="status"><span className={`dot ${c.active ? 'green' : 'red'}`} />{c.active ? 'Active' : 'Inactive'}</span></td><td><div className="actions"><button className="btn" onClick={() => setEditingCategory(c)}>Edit</button><button className="btn" onClick={() => toggleCategoryStatus(c)} disabled={saving}>Toggle</button><button className="btn danger" onClick={() => removeCategory(c)} disabled={saving}>Remove</button></div></td></tr>)) : (<tr><td colSpan={5} style={{ color: 'var(--gray-500)', fontWeight: 800 }}>No categories found.</td></tr>)}</tbody></table></div></div>
+                {categoryToDelete && (<div className="modal"><div className="modal-card"><h3>Confirm Deletion</h3><p>Are you sure you want to delete the category <strong>"{categoryToDelete.name}"</strong>?<br/><br/><span style={{ color: '#ef4444' }}>Warning:</span> This will irreversibly remove all services under this category and freeze any suppliers assigned to it.</p><div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'flex-end' }}><button className="btn" onClick={() => setCategoryToDelete(null)} disabled={saving}>Cancel</button><button className="btn danger" onClick={confirmRemoveCategory} disabled={saving}>{saving ? 'Deleting...' : 'Delete Category'}</button></div></div></div>)}
               </div>
-              {selectedRequest && (
-                <div style={{ color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>#{String(selectedRequest._id).slice(-6)}</div>
-              )}
-            </div>
-
-            {selectedRequest ? (
-              <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-                {/* Supplier info banner */}
-                {(selectedRequest.supplierName || selectedRequest.supplierId) && (
-                  <div style={{
-                    padding: '10px 14px',
-                    borderRadius: 14,
-                    border: '1px solid rgba(245,158,11,0.35)',
-                    background: 'rgba(245,158,11,0.08)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    flexWrap: 'wrap'
-                  }}>
-                    <i className="fas fa-user-tie" style={{ color: '#f59e0b', fontSize: 14 }} />
-                    <span style={{ fontWeight: 900, color: '#92400e', fontSize: 13 }}>
-                      Supplier: <strong>{selectedRequest.supplierName || 'Unknown'}</strong>
-                    </span>
-                    <span style={{
-                      padding: '3px 8px',
-                      borderRadius: 999,
-                      border: '1px solid rgba(245,158,11,0.55)',
-                      background: 'rgba(245,158,11,0.12)',
-                      color: '#92400e',
-                      fontWeight: 1100,
-                      fontSize: 11
-                    }}>
-                      NEW REQUEST
-                    </span>
-                    {selectedRequest.supplierId && (
-                      <span style={{ color: '#94a3b8', fontSize: 11, fontWeight: 800 }}>
-                        ID: {String(selectedRequest.supplierId).slice(-8)}
-                      </span>
-                    )}
+            )}
+            {tab === 'requests' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
+                <div className="card"><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}><div><h3>Incoming Requests</h3><p>Each request routes to Category or Service creation</p></div><div style={{ color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>Count: {requests.length}</div></div><div className="table-wrap"><table><thead><tr><th>Type</th><th>From</th><th>Category</th><th>Services</th><th>Status</th></tr></thead><tbody>{requests.length ? requests.map((req) => (<tr key={req._id} style={{ cursor: 'pointer' }} onClick={() => openRequestEditor(req)}><td><button className="btn" onClick={(e) => { e.stopPropagation(); goToRequestTarget(req); }}>{requestType(req) === 'category' ? 'Category' : 'Service'}</button></td><td>{req.supplierName || 'Admin'}</td><td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{req.category || '-'}<span style={{ padding: '1px 5px', borderRadius: 999, border: '1px solid rgba(30,58,138,0.4)', background: 'rgba(30,58,138,0.1)', color: 'var(--primary-dark)', fontWeight: 1100, fontSize: 9 }}>NEW</span></span></td><td>{(req.services || []).map((svc, si) => (<span key={si} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 8 }}>{svc}<span style={{ padding: '1px 4px', borderRadius: 999, border: '1px solid rgba(30,58,138,0.4)', background: 'rgba(30,58,138,0.08)', color: 'var(--primary-dark)', fontWeight: 1100, fontSize: 8 }}>NEW</span></span>))}{!(req.services || []).length && '-'}</td><td>{(() => { const b = requestStatusBadge(req.status); return (<span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: 999, fontWeight: 900, fontSize: 12, background: b.bg, color: b.color, border: b.border }}>{b.label}</span>); })()}</td></tr>)) : (<tr><td colSpan={5}>No requests.</td></tr>)}</tbody></table></div></div>
+                <div className="card"><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}><div><h3>Request Detail</h3><p>Admin1 approval — set each service rate on the slider, save, then publish</p></div>{selectedRequest && (<div style={{ color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>#{String(selectedRequest._id).slice(-6)}</div>)}</div>{selectedRequest ? (<div style={{ display: 'grid', gap: 10, marginTop: 12 }}>{(selectedRequest.supplierName || selectedRequest.supplierId) && (<div style={{ padding: '10px 14px', borderRadius: 14, border: '1px solid rgba(30,58,138,0.25)', background: 'rgba(30,58,138,0.06)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}><i className="fas fa-user-tie" style={{ color: 'var(--primary)', fontSize: 14 }} /><span style={{ fontWeight: 900, color: '#92400e', fontSize: 13 }}>Supplier: <strong>{selectedRequest.supplierName || 'Unknown'}</strong></span><span style={{ padding: '3px 8px', borderRadius: 999, border: '1px solid rgba(30,58,138,0.4)', background: 'rgba(30,58,138,0.1)', color: '#92400e', fontWeight: 1100, fontSize: 11 }}>NEW REQUEST</span>{selectedRequest.supplierId && (<span style={{ color: 'var(--gray-500)', fontSize: 11, fontWeight: 800 }}>ID: {String(selectedRequest.supplierId).slice(-8)}</span>)}</div>)}<div style={{ border: '1px solid var(--primary-soft)', borderRadius: 16, padding: 12, background: 'var(--card-white)' }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}><div style={{ fontWeight: 1100, color: 'var(--gray-900)', display: 'flex', alignItems: 'center', gap: 8 }}>{requestForm.category || selectedRequest.category}<span style={{ padding: '2px 8px', borderRadius: 999, border: '1px solid rgba(30,58,138,0.4)', background: 'rgba(30,58,138,0.1)', color: 'var(--primary-dark)', fontWeight: 1100, fontSize: 10, letterSpacing: '0.04em' }}>NEW</span><span style={{ marginLeft: 4, color: 'var(--gray-500)', fontWeight: 900, fontSize: 12 }}>({requestType(selectedRequest)})</span></div><div>{(() => { const b = requestStatusBadge(selectedRequest.status); return (<span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: 999, fontWeight: 900, fontSize: 12, background: b.bg, color: b.color, border: b.border }}>{b.label}</span>); })()}</div></div><div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>{(requestServices || []).filter(s => String(s || '').trim()).length ? requestServices.map((svc, idx) => { const name = String(svc || '').trim(); if (!name) return null; const r = serviceRatesByService[name] || { min: 0, max: 0 }; const active = activeServiceName === name; return (<button key={`${idx}_${name}`} onClick={() => { setActiveServiceName(name); setServiceRateMsg(''); }} style={{ textAlign: 'left', cursor: 'pointer', border: active ? '1px solid var(--primary)' : '1px solid var(--primary-soft)', borderRadius: 16, padding: 10, background: active ? 'rgba(117,139,253,0.12)' : 'var(--card-white)', color: 'inherit', font: 'inherit' }}><div style={{ fontWeight: 1100, color: 'var(--gray-900)', display: 'flex', alignItems: 'center', gap: 6 }}>{name}<span style={{ padding: '1px 6px', borderRadius: 999, border: '1px solid rgba(30,58,138,0.4)', background: 'rgba(30,58,138,0.1)', color: 'var(--primary-dark)', fontWeight: 1100, fontSize: 9, letterSpacing: '0.04em' }}>NEW</span></div><div style={{ marginTop: 6, color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>{requestForm.currency || selectedRequest.currency || 'LKR'} {r.min} – {r.max} / hr</div></button>); }) : (<div style={{ color: 'var(--gray-500)', fontWeight: 800, gridColumn: '1 / -1' }}>No services listed — use the slider below for a category-level band.</div>)}</div><div style={{ marginTop: 14 }}><div style={{ color: 'var(--gray-500)', fontWeight: 900, fontSize: 12, marginBottom: 8 }}>{(requestServices || []).filter(s => String(s || '').trim()).length ? `Rate band — ${activeServiceName || 'select a service'}` : 'Rate band (category)'}</div>{(requestServices || []).filter(s => String(s || '').trim()).length ? (activeServiceName && serviceRatesByService[activeServiceName] ? (<DualThumbRateSlider domainMin={activeRateDomain.domainMin} domainMax={activeRateDomain.domainMax} min={serviceRatesByService[activeServiceName].min} max={serviceRatesByService[activeServiceName].max} onChange={({ min, max }) => { const key = String(activeServiceName).trim(); setServiceRatesByService(prev => ({ ...prev, [key]: { min, max } })); }} currency={requestForm.currency || selectedRequest.currency || 'LKR'} disabled={saving} />) : (<div style={{ color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>Click a service above to adjust its range.</div>)) : (<DualThumbRateSlider domainMin={activeRateDomain.domainMin} domainMax={activeRateDomain.domainMax} min={Number(requestForm.minRatePerHour) || 0} max={Number(requestForm.maxRatePerHour) || 0} onChange={({ min, max }) => setRequestForm(f => ({ ...f, minRatePerHour: String(min), maxRatePerHour: String(max) }))} currency={requestForm.currency || selectedRequest.currency || 'LKR'} disabled={saving} />)}</div>{(requestServices || []).filter(s => String(s || '').trim()).length > 0 && activeServiceName ? (<div style={{ display: 'grid', gap: 8, marginTop: 14 }}><div style={{ color: 'var(--gray-500)', fontWeight: 900, fontSize: 12 }}>Service description — <span style={{ color: 'var(--gray-900)' }}>{activeServiceName}</span></div><textarea className="input" style={{ minHeight: 96, resize: 'vertical' }} value={serviceDescriptionsByService[activeServiceName] ?? ''} onChange={(e) => setServiceDescriptionsByService(prev => ({ ...prev, [activeServiceName]: e.target.value }))} placeholder={`Notes for “${activeServiceName}” only`} /></div>) : null}</div><input className="input" value={requestForm.category} onChange={(e) => setRequestForm(f => ({ ...f, category: e.target.value }))} placeholder="Category name" /><input className="input" value={requestForm.categoryDescription} onChange={(e) => setRequestForm(f => ({ ...f, categoryDescription: e.target.value }))} placeholder="Category description" /><div style={{ display: 'grid', gap: 8 }}><div style={{ color: 'var(--gray-500)', fontWeight: 900, fontSize: 12 }}>Services (one per box)</div>{(requestServices || []).length ? requestServices.map((svc, i) => (<input key={`${i}_${svc}`} className="input" value={svc} onChange={(e) => setRequestServices(prev => prev.map((x, idx) => idx === i ? e.target.value : x))} placeholder={`Service #${i + 1}`} />)) : (<div style={{ color: 'var(--gray-500)', fontWeight: 800, fontSize: 12 }}>No services listed.</div>)}</div>{serviceRateMsg && <div style={{ color: 'var(--primary)', fontWeight: 800, fontSize: 12 }}>{serviceRateMsg}</div>}<div className="actions" style={{ flexWrap: 'wrap' }}>{(requestServices || []).filter(s => String(s || '').trim()).length > 0 && activeServiceName && (<button className="btn" onClick={saveActiveServiceRate} disabled={saving}>Save rate (this service)</button>)}<button className="btn" onClick={saveRequest} disabled={saving}>Save all</button><button className="primary" onClick={completeRequest} disabled={saving}>Complete + Publish</button></div></div>) : (<div style={{ marginTop: 12, color: 'var(--gray-500)', fontWeight: 800 }}>Select a request from the table to inspect.</div>)}</div>
+              </div>
+            )}
+            {tab === 'research' && (
+              <div style={{ maxWidth: 900, margin: '0 auto' }}>
+                <div className="card"><h3>Pricing Guidelines Lookup</h3><p style={{ marginTop: 6, color: 'var(--gray-500)', fontWeight: 800 }}>Reference data set only. Use these predicted values as a guideline when you manually register new services. This data is strictly isolated from the live catalog.</p><div style={{ display: 'flex', gap: 12, marginTop: 16 }}><select className="select" value={researchSearchCat} onChange={e => setResearchSearchCat(e.target.value)} style={{ minWidth: 200 }}><option value="">All Categories</option>{[...new Set(PREDICTION_DATA.map(p => p.category))].map(cat => (<option key={cat} value={cat}>{cat}</option>))}</select><input className="input" placeholder="Search service..." value={researchSearchSvc} onChange={e => setResearchSearchSvc(e.target.value)} style={{ flex: 1 }} /></div><div className="table-wrap" style={{ marginTop: 16, maxHeight: '65vh', overflowY: 'auto' }}><table><thead><tr><th>Category</th><th>Service</th><th>Min LKR/hr</th><th>Max LKR/hr</th></tr></thead><tbody>{PREDICTION_DATA.filter(p => (researchSearchCat === '' || p.category === researchSearchCat) && (researchSearchSvc === '' || p.service.toLowerCase().includes(researchSearchSvc.toLowerCase()))).map((row, idx) => (<tr key={idx}><td style={{ fontWeight: 1100, color: '#3b82f6' }}>{row.category}</td><td style={{ fontWeight: 900 }}>{row.service}</td><td>{row.min.toLocaleString()}</td><td>{row.max.toLocaleString()}</td></tr>))}{PREDICTION_DATA.filter(p => (researchSearchCat === '' || p.category === researchSearchCat) && (researchSearchSvc === '' || p.service.toLowerCase().includes(researchSearchSvc.toLowerCase()))).length === 0 && (<tr><td colSpan="4" style={{ textAlign: 'center', color: 'var(--gray-500)' }}>No predictions match your search.</td></tr>)}</tbody></table></div></div>
+              </div>
+            )}
+            {tab === 'demand' && (
+              <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+                <div className="zone">
+                  <div className="card" style={{ gridColumn: '1 / -1' }}>
+                    <h3>Daily Demand Forecast (7‑Day)</h3>
+                    <p>Exponential smoothing forecast based on last 30 days of mock demand data.</p>
+                    <ResponsiveContainer width="100%" height={400}>
+                      <LineChart data={forecastChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--primary-soft)" />
+                        <XAxis dataKey="date" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="actual" stroke="#3b82f6" name="Actual Requests" strokeWidth={2} dot={{ r: 3 }} />
+                        <Line type="monotone" dataKey="forecast" stroke="#ef4444" name="Forecast" strokeDasharray="5 5" strokeWidth={2} dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
-                )}
-
-                <div style={{ border: '1px solid rgba(59,130,246,0.18)', borderRadius: 16, padding: 12, background: 'rgba(2,6,23,0.55)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ fontWeight: 1100, color: '#e5e7eb', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {requestForm.category || selectedRequest.category}
-                      <span style={{
-                        padding: '2px 8px',
-                        borderRadius: 999,
-                        border: '1px solid rgba(245,158,11,0.55)',
-                        background: 'rgba(245,158,11,0.15)',
-                        color: '#fbbf24',
-                        fontWeight: 1100,
-                        fontSize: 10,
-                        letterSpacing: '0.04em'
-                      }}>NEW</span>
-                      <span style={{ marginLeft: 4, color: '#94a3b8', fontWeight: 900, fontSize: 12 }}>
-                        ({requestType(selectedRequest)})
-                      </span>
-                    </div>
-                    <div>
-                      {(() => {
-                        const b = requestStatusBadge(selectedRequest.status);
-                        return (
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '4px 10px',
-                              borderRadius: 999,
-                              fontWeight: 900,
-                              fontSize: 12,
-                              background: b.bg,
-                              color: b.color,
-                              border: b.border
-                            }}
-                          >
-                            {b.label}
-                          </span>
-                        );
-                      })()}
+                  <div className="card" style={{ gridColumn: '1 / 2' }}>
+                    <h3>Popularity Ranking (Top 10 Services)</h3>
+                    <p>Based on mock request data — refresh page to generate new sample.</p>
+                    <ResponsiveContainer width="100%" height={400}>
+                      <BarChart data={popularityData} layout="vertical" margin={{ left: 100, right: 30 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" />
+                        <YAxis type="category" dataKey="service" width={90} />
+                        <Tooltip />
+                        <Bar dataKey="requests" fill="var(--primary)" name="Request Count" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="card" style={{ gridColumn: '2 / 3' }}>
+                    <h3>Insights & Recommendations</h3>
+                    <p>AI‑like analysis from the mock demand pattern.</p>
+                    <ul style={{ marginTop: 16, paddingLeft: 20, color: 'var(--gray-700)', fontWeight: 800, fontSize: 13, lineHeight: 1.6 }}>
+                      <li>Weekends show consistently higher demand (+30‑40% vs weekdays).</li>
+                      <li>Monday experiences the lowest request volume — consider targeted promotions.</li>
+                      <li>Forecast suggests a slight upward trend over the next week (≈8% increase).</li>
+                      <li>Top service categories: Plumber, Electrician, Cleaner dominate demand.</li>
+                      <li>Recommend adding new services in high‑demand categories listed above.</li>
+                    </ul>
+                    <div style={{ marginTop: 24, padding: 12, background: 'rgba(59,130,246,0.08)', borderRadius: 16, border: '1px solid rgba(59,130,246,0.2)' }}>
+                      <div style={{ fontWeight: 1100, color: '#2563eb' }}>📌 Note</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--gray-600)', marginTop: 6 }}>Data shown is generated mock for demonstration. Replace with real API calls once backend provides historical request counts.</div>
                     </div>
                   </div>
-
-                  <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                    {(requestServices || []).filter((s) => String(s || '').trim()).length ? (
-                      requestServices.map((svc, idx) => {
-                        const name = String(svc || '').trim();
-                        if (!name) return null;
-                        const r = serviceRatesByService[name] || { min: 0, max: 0 };
-                        const active = activeServiceName === name;
-                        return (
-                          <button
-                            type="button"
-                            key={`${idx}_${name}`}
-                            onClick={() => {
-                              setActiveServiceName(name);
-                              setServiceRateMsg('');
-                            }}
-                            style={{
-                              textAlign: 'left',
-                              cursor: 'pointer',
-                              border: active ? '1px solid rgba(34,211,238,0.55)' : '1px solid rgba(148,163,184,0.18)',
-                              borderRadius: 16,
-                              padding: 10,
-                              background: active ? 'rgba(14,165,233,0.12)' : 'rgba(2,6,23,0.55)',
-                              color: 'inherit',
-                              font: 'inherit'
-                            }}
-                          >
-                            <div style={{ fontWeight: 1100, color: '#e5e7eb', display: 'flex', alignItems: 'center', gap: 6 }}>
-                              {name}
-                              <span style={{
-                                padding: '1px 6px',
-                                borderRadius: 999,
-                                border: '1px solid rgba(245,158,11,0.55)',
-                                background: 'rgba(245,158,11,0.15)',
-                                color: '#fbbf24',
-                                fontWeight: 1100,
-                                fontSize: 9,
-                                letterSpacing: '0.04em'
-                              }}>NEW</span>
-                            </div>
-                            <div style={{ marginTop: 6, color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>
-                              {requestForm.currency || selectedRequest.currency || 'LKR'} {r.min} – {r.max} / hr
-                            </div>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div style={{ color: '#94a3b8', fontWeight: 800, gridColumn: '1 / -1' }}>No services listed — use the slider below for a category-level band.</div>
-                    )}
-                  </div>
-
-                  <div style={{ marginTop: 14 }}>
-                    <div style={{ color: '#94a3b8', fontWeight: 900, fontSize: 12, marginBottom: 8 }}>
-                      {(requestServices || []).filter((s) => String(s || '').trim()).length
-                        ? `Rate band — ${activeServiceName || 'select a service'}`
-                        : 'Rate band (category)'}
-                    </div>
-                    {(requestServices || []).filter((s) => String(s || '').trim()).length ? (
-                      activeServiceName && serviceRatesByService[activeServiceName] ? (
-                        <DualThumbRateSlider
-                          domainMin={activeRateDomain.domainMin}
-                          domainMax={activeRateDomain.domainMax}
-                          min={serviceRatesByService[activeServiceName].min}
-                          max={serviceRatesByService[activeServiceName].max}
-                          onChange={({ min, max }) => {
-                            const key = String(activeServiceName).trim();
-                            setServiceRatesByService((prev) => ({
-                              ...prev,
-                              [key]: { min, max }
-                            }));
-                          }}
-                          currency={requestForm.currency || selectedRequest.currency || 'LKR'}
-                          disabled={saving}
-                        />
-                      ) : (
-                        <div style={{ color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>Click a service above to adjust its range.</div>
-                      )
-                    ) : (
-                      <DualThumbRateSlider
-                        domainMin={activeRateDomain.domainMin}
-                        domainMax={activeRateDomain.domainMax}
-                        min={Number(requestForm.minRatePerHour) || 0}
-                        max={Number(requestForm.maxRatePerHour) || 0}
-                        onChange={({ min, max }) =>
-                          setRequestForm((f) => ({
-                            ...f,
-                            minRatePerHour: String(min),
-                            maxRatePerHour: String(max)
-                          }))
-                        }
-                        currency={requestForm.currency || selectedRequest.currency || 'LKR'}
-                        disabled={saving}
-                      />
-                    )}
-                  </div>
-
-                  {(requestServices || []).filter((s) => String(s || '').trim()).length > 0 && activeServiceName ? (
-                    <div style={{ display: 'grid', gap: 8, marginTop: 14 }}>
-                      <div style={{ color: '#94a3b8', fontWeight: 900, fontSize: 12 }}>
-                        Service description — <span style={{ color: '#e5e7eb' }}>{activeServiceName}</span>
-                      </div>
-                      <textarea
-                        className="input"
-                        style={{ minHeight: 96, resize: 'vertical' }}
-                        value={serviceDescriptionsByService[activeServiceName] ?? ''}
-                        onChange={(e) =>
-                          setServiceDescriptionsByService((prev) => ({
-                            ...prev,
-                            [activeServiceName]: e.target.value
-                          }))
-                        }
-                        placeholder={`Notes for “${activeServiceName}” only`}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-
-                <input className="input" value={requestForm.category} onChange={(e) => setRequestForm((f) => ({ ...f, category: e.target.value }))} placeholder="Category name" />
-                <input className="input" value={requestForm.categoryDescription} onChange={(e) => setRequestForm((f) => ({ ...f, categoryDescription: e.target.value }))} placeholder="Category description" />
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <div style={{ color: '#94a3b8', fontWeight: 900, fontSize: 12 }}>Services (one per box)</div>
-                  {(requestServices || []).length ? (
-                    requestServices.map((svc, i) => (
-                      <input
-                        key={`${i}_${svc}`}
-                        className="input"
-                        value={svc}
-                        onChange={(e) =>
-                          setRequestServices((prev) => prev.map((x, idx) => (idx === i ? e.target.value : x)))
-                        }
-                        placeholder={`Service #${i + 1}`}
-                      />
-                    ))
-                  ) : (
-                    <div style={{ color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>No services listed.</div>
-                  )}
-                </div>
-                {serviceRateMsg ? (
-                  <div style={{ color: '#22d3ee', fontWeight: 800, fontSize: 12 }}>{serviceRateMsg}</div>
-                ) : null}
-                <div className="actions" style={{ flexWrap: 'wrap' }}>
-                  {(requestServices || []).filter((s) => String(s || '').trim()).length > 0 && activeServiceName ? (
-                    <button type="button" className="btn" onClick={saveActiveServiceRate} disabled={saving}>
-                      Save rate (this service)
-                    </button>
-                  ) : null}
-                  <button type="button" className="btn" onClick={saveRequest} disabled={saving}>
-                    Save all
-                  </button>
-                  <button type="button" className="primary" onClick={completeRequest} disabled={saving}>
-                    Complete + Publish
-                  </button>
                 </div>
               </div>
-            ) : (
-              <div style={{ marginTop: 12, color: '#94a3b8', fontWeight: 800 }}>Select a request from the table to inspect.</div>
             )}
           </div>
         </div>
-      )}
-
-      {tab === 'research' && (
-        <div style={{ maxWidth: 900, margin: '0 auto' }}>
-          <div className="card">
-            <h3>Pricing Guidelines Lookup</h3>
-            <p style={{ marginTop: 6, color: '#64748b', fontWeight: 800 }}>
-              Reference data set only. Use these predicted values as a guideline when you manually register new services.
-              This data is strictly isolated from the live catalog.
-            </p>
-            
-            <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-              <select 
-                className="select" 
-                value={researchSearchCat} 
-                onChange={e => setResearchSearchCat(e.target.value)}
-                style={{ minWidth: 200 }}
-              >
-                <option value="">All Categories</option>
-                {[...new Set(PREDICTION_DATA.map(p => p.category))].map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
-              <input 
-                className="input" 
-                placeholder="Search service..." 
-                value={researchSearchSvc} 
-                onChange={e => setResearchSearchSvc(e.target.value)}
-                style={{ flex: 1 }}
-              />
-            </div>
-
-            <div className="table-wrap" style={{ marginTop: 16, maxHeight: '65vh', overflowY: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Category</th>
-                    <th>Service</th>
-                    <th>Min LKR/hr</th>
-                    <th>Max LKR/hr</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {PREDICTION_DATA.filter(p => 
-                    (researchSearchCat === '' || p.category === researchSearchCat) &&
-                    (researchSearchSvc === '' || p.service.toLowerCase().includes(researchSearchSvc.toLowerCase()))
-                  ).map((row, idx) => (
-                    <tr key={idx}>
-                      <td style={{ fontWeight: 1100, color: '#3b82f6' }}>{row.category}</td>
-                      <td style={{ fontWeight: 900 }}>{row.service}</td>
-                      <td>{row.min.toLocaleString()}</td>
-                      <td>{row.max.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {PREDICTION_DATA.filter(p => 
-                    (researchSearchCat === '' || p.category === researchSearchCat) &&
-                    (researchSearchSvc === '' || p.service.toLowerCase().includes(researchSearchSvc.toLowerCase()))
-                  ).length === 0 && (
-                    <tr>
-                      <td colSpan="4" style={{ textAlign: 'center', color: '#94a3b8' }}>
-                        No predictions match your search.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-      {tab === 'grading' && (
-        <div className="grade-zone">
-          <div>
-            <div className="grade-stack">
-              <div className="grade-card">
-                <div className="grade-head">
-                  <div className="grade-title">
-                    <div className="grade-badge a">A</div>
-                    <div>
-                      <h3>Grade A</h3>
-                      <p>Top-tier visibility and premium trust</p>
-                    </div>
-                  </div>
-                  <span className="pill">Priority</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Experience threshold (years)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="20"
-                      value={gradingDraft.A.minYears}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, A: { ...g.A, minYears: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.A.minYears} yrs</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Star rating</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={gradingDraft.A.stars}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, A: { ...g.A, stars: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.A.stars}★</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Tier Price Minimum (%)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={gradingDraft.A.priceRangeMin || 80}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, A: { ...g.A, priceRangeMin: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.A.priceRangeMin || 80}%</span>
-                </div>
-                <div className="slider-row">
-                  <div>
-                    <label>Tier Price Maximum (%)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={gradingDraft.A.priceRangeMax || 100}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, A: { ...g.A, priceRangeMax: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.A.priceRangeMax || 100}%</span>
-                </div>
-                <div className="slider-row">
-                  <div style={{ width: '100%' }}>
-                    <label>Public label (customers see this)</label>
-                    <input
-                      className="input"
-                      value={gradingDraft.A.label || ''}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, A: { ...g.A, label: e.target.value } }))}
-                      placeholder="e.g. Grade A — 10+ years experience"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grade-card">
-                <div className="grade-head">
-                  <div className="grade-title">
-                    <div className="grade-badge b">B</div>
-                    <div>
-                      <h3>Grade B</h3>
-                      <p>Balanced ranking and strong quality signal</p>
-                    </div>
-                  </div>
-                  <span className="pill">Standard</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Experience threshold (years)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="20"
-                      value={gradingDraft.B.minYears}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, B: { ...g.B, minYears: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.B.minYears} yrs</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Star rating</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={gradingDraft.B.stars}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, B: { ...g.B, stars: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.B.stars}★</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Tier Price Minimum (%)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={gradingDraft.B.priceRangeMin || 60}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, B: { ...g.B, priceRangeMin: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.B.priceRangeMin || 60}%</span>
-                </div>
-                <div className="slider-row">
-                  <div>
-                    <label>Tier Price Maximum (%)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={gradingDraft.B.priceRangeMax || 80}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, B: { ...g.B, priceRangeMax: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.B.priceRangeMax || 80}%</span>
-                </div>
-                <div className="slider-row">
-                  <div style={{ width: '100%' }}>
-                    <label>Public label (customers see this)</label>
-                    <input
-                      className="input"
-                      value={gradingDraft.B.label || ''}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, B: { ...g.B, label: e.target.value } }))}
-                      placeholder="e.g. Grade B — solid experience"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grade-card">
-                <div className="grade-head">
-                  <div className="grade-title">
-                    <div className="grade-badge c">C</div>
-                    <div>
-                      <h3>Grade C</h3>
-                      <p>Base tier, limited boost and visibility</p>
-                    </div>
-                  </div>
-                  <span className="pill">Base</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Experience threshold (years)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="20"
-                      value={gradingDraft.C.minYears}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, C: { ...g.C, minYears: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.C.minYears} yrs</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Star rating</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={gradingDraft.C.stars}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, C: { ...g.C, stars: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.C.stars}★</span>
-                </div>
-
-                <div className="slider-row">
-                  <div>
-                    <label>Tier Price Minimum (%)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={gradingDraft.C.priceRangeMin || 0}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, C: { ...g.C, priceRangeMin: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.C.priceRangeMin || 0}%</span>
-                </div>
-                <div className="slider-row">
-                  <div>
-                    <label>Tier Price Maximum (%)</label>
-                    <input
-                      className="slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={gradingDraft.C.priceRangeMax || 60}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, C: { ...g.C, priceRangeMax: Number(e.target.value) } }))}
-                    />
-                  </div>
-                  <span className="pill2">{gradingDraft.C.priceRangeMax || 60}%</span>
-                </div>
-                <div className="slider-row">
-                  <div style={{ width: '100%' }}>
-                    <label>Public label (customers see this)</label>
-                    <input
-                      className="input"
-                      value={gradingDraft.C.label || ''}
-                      onChange={(e) => setGradingDraft((g) => ({ ...g, C: { ...g.C, label: e.target.value } }))}
-                      placeholder="e.g. Grade C — new professionals"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="footer-bar">
-              <div className="footer-msg">
-                {gradingMsg || 'Commit or discard global grading configuration changes.'}
-              </div>
-              <div className="footer-actions">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
-                    setGradingDraft(gradingSaved);
-                    setGradingMsg('Discarded changes.');
-                    setTimeout(() => setGradingMsg(''), 2000);
-                  }}
-                >
-                  Discard
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={async () => {
-                    const draft = gradingDraft;
-                    const ok =
-                      draft.A.minYears >= draft.B.minYears &&
-                      draft.B.minYears >= draft.C.minYears &&
-                      draft.A.stars >= draft.B.stars &&
-                      draft.B.stars >= draft.C.stars;
-                    if (!ok) {
-                      setGradingMsg('Integrity warning: ensure A ≥ B ≥ C for years and stars.');
-                      return;
-                    }
-                    try {
-                      setSaving(true);
-                      await saveGradingConfig(draft);
-                      try {
-                        localStorage.setItem(GRADING_KEY, JSON.stringify(draft));
-                      } catch {
-                        /* ignore */
-                      }
-                      setGradingSaved(draft);
-                      setGradingMsg('Saved grading configuration to the server.');
-                      setTimeout(() => setGradingMsg(''), 2500);
-                    } catch (e) {
-                      setGradingMsg(e?.response?.data?.message || 'Failed to save grading configuration.');
-                    } finally {
-                      setSaving(false);
-                    }
-                  }}
-                >
-                  Commit Changes
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="preview">
-            <h3>Real-Time Public View Preview</h3>
-            <p>Badge style and priority boost mockup</p>
-
-            {(() => {
-              // pick the grade with highest maximum price as a preview focus
-              const entries = [
-                { grade: 'A', ...gradingDraft.A },
-                { grade: 'B', ...gradingDraft.B },
-                { grade: 'C', ...gradingDraft.C }
-              ];
-              entries.sort((a, b) => (b.priceRangeMax || 0) - (a.priceRangeMax || 0));
-              const focus = entries[0];
-              const badgeClass = focus.grade === 'A' ? 'a' : focus.grade === 'B' ? 'b' : 'c';
-              const stars = '★'.repeat(Math.max(1, Math.min(5, focus.stars)));
-              return (
-                <div className="profile-mock">
-                  <div className="avatar">PR</div>
-                  <div className="mock-meta">
-                    <div className="name">Provider Profile Mock</div>
-                    <div className="sub">
-                      {focus.label || `Experience ≥ ${focus.minYears} yrs · Rating ${focus.stars}/5`}
-                    </div>
-                    <div className="badge-pill">
-                      <span className={`grade-badge ${badgeClass}`} style={{ width: 28, height: 28, borderRadius: 12 }}>
-                        {focus.grade}
-                      </span>
-                      <span>{stars}</span>
-                      <span style={{ color: '#94a3b8', fontWeight: 900 }}>Price Range: {focus.priceRangeMin}% - {focus.priceRangeMax}%</span>
-                    </div>
-                    <div className="boost-bar" title="Service price tier">
-                      <div className="boost-fill" style={{ width: `${Math.max(0, Math.min(100, focus.priceRangeMax || 100))}%` }} />
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            <div style={{ marginTop: 12, color: '#94a3b8', fontWeight: 800, fontSize: 12 }}>
-              Preview uses the highest price tier as the featured badge.
-            </div>
-          </div>
-        </div>
-      )}
-        </div>
       </div>
-
       {editingCategory && (
         <div className="modal">
           <div className="modal-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-              <div style={{ fontWeight: 1100, color: '#e5e7eb' }}>Edit Category</div>
-              <button type="button" className="btn" onClick={() => setEditingCategory(null)}>
-                Close
-              </button>
-            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}><div style={{ fontWeight: 1100, color: 'var(--gray-900)' }}>Edit Category</div><button className="btn" onClick={() => setEditingCategory(null)}>Close</button></div>
             <div className="grid">
-              <input
-                className="input"
-                value={editingCategory.name}
-                onChange={(e) => setEditingCategory((c) => ({ ...c, name: e.target.value }))}
-              />
-              <textarea
-                className="input"
-                style={{ minHeight: 90, resize: 'vertical' }}
-                value={editingCategory.description || ''}
-                onChange={(e) => setEditingCategory((c) => ({ ...c, description: e.target.value }))}
-              />
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setEditingCategory((c) => ({ ...c, active: !c.active }))}
-              >
-                Status: {editingCategory.active ? 'Active' : 'Inactive'}
-              </button>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                <button type="button" className="btn" onClick={() => setEditingCategory(null)}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={async () => {
-                    try {
-                      setSaving(true);
-                      setError('');
-                      await updateCategory(editingCategory.id, {
-                        name: editingCategory.name,
-                        description: editingCategory.description,
-                        active: editingCategory.active
-                      });
-                      setEditingCategory(null);
-                      await Promise.all([loadCategories(), loadCatalog()]);
-                    } catch (e) {
-                      setError(e?.response?.data?.message || 'Failed to update category.');
-                    } finally {
-                      setSaving(false);
-                    }
-                  }}
-                  disabled={saving}
-                >
-                  Save
-                </button>
-              </div>
+              <input className="input" value={editingCategory.name} onChange={(e) => setEditingCategory(c => ({ ...c, name: e.target.value }))} />
+              <textarea className="input" style={{ minHeight: 90, resize: 'vertical' }} value={editingCategory.description || ''} onChange={(e) => setEditingCategory(c => ({ ...c, description: e.target.value }))} />
+              <button className="btn" onClick={() => setEditingCategory(c => ({ ...c, active: !c.active }))}>Status: {editingCategory.active ? 'Active' : 'Inactive'}</button>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}><button className="btn" onClick={() => setEditingCategory(null)}>Cancel</button><button className="primary" onClick={async () => { try { setSaving(true); await updateCategory(editingCategory.id, { name: editingCategory.name, description: editingCategory.description, active: editingCategory.active }); setEditingCategory(null); await Promise.all([loadCategories(), loadCatalog()]); } catch (e) { setError(e?.response?.data?.message || 'Failed to update category.'); } finally { setSaving(false); } }} disabled={saving}>Save</button></div>
             </div>
           </div>
         </div>
       )}
-    </div>
       <Footer />
     </>
   );
@@ -3075,59 +1213,10 @@ export default Admin2DashboardPage;
 function cryptoId() {
   try {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-  } catch {
-    // ignore
-  }
-  return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  } catch {}
+  return `${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
 }
 
-function CalibrationChart({ series }) {
-  const width = 520;
-  const height = 180;
-  const pad = 24;
-  const maxY = Math.max(...series.map((s) => s.rate), 1);
-  const minY = Math.min(...series.map((s) => s.rate), 0);
-  const spanY = Math.max(1, maxY - minY);
-
-  const xFor = (idx) => pad + (idx * (width - pad * 2)) / Math.max(1, series.length - 1);
-  const yFor = (val) => pad + ((maxY - val) * (height - pad * 2)) / spanY;
-
-  const path = series
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i).toFixed(1)} ${yFor(p.rate).toFixed(1)}`)
-    .join(' ');
-
-  return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ marginTop: 10 }}>
-      <defs>
-        <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.9" />
-          <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0.9" />
-        </linearGradient>
-      </defs>
-
-      {/* grid */}
-      {[0, 1, 2, 3].map((i) => {
-        const y = pad + (i * (height - pad * 2)) / 3;
-        return <line key={i} x1={pad} x2={width - pad} y1={y} y2={y} stroke="rgba(148,163,184,0.18)" strokeWidth="1" />;
-      })}
-
-      <path d={path} fill="none" stroke="url(#lineGrad)" strokeWidth="3" />
-      {series.map((p, i) => (
-        <g key={p.level}>
-          <circle cx={xFor(i)} cy={yFor(p.rate)} r="4.2" fill="#22d3ee" stroke="rgba(2,6,23,0.9)" strokeWidth="2" />
-          <text x={xFor(i)} y={height - 8} textAnchor="middle" fontSize="10" fill="#94a3b8" fontWeight="700">
-            Lv {p.level}
-          </text>
-        </g>
-      ))}
-      <text x={pad} y={12} fontSize="10" fill="#94a3b8" fontWeight="800">
-        Rate (per hour)
-      </text>
-    </svg>
-  );
-}
-
-/** Fits the track to the current min/max with padding; when max drops, extra headroom keeps the usable line from feeling cramped. */
 function computeRateDomain(lo, hi) {
   const minV = Math.min(Number(lo) || 0, Number(hi) || 0);
   const maxV = Math.max(Number(lo) || 0, Number(hi) || 0);
@@ -3151,18 +1240,14 @@ function DualThumbRateSlider({ domainMin = 0, domainMax = 15000, min, max, onCha
   onChangeRef.current = onChange;
   minPropRef.current = min;
   maxPropRef.current = max;
-
   const dMin = frozenDomainRef.current ? frozenDomainRef.current.min : domainMin;
   const dMax = frozenDomainRef.current ? frozenDomainRef.current.max : domainMax;
-
   const curLo = Math.min(Number(min) || 0, Number(max) || 0);
   const curHi = Math.max(Number(min) || 0, Number(max) || 0);
   const lo = Math.max(dMin, Math.min(dMax, curLo));
   const hi = Math.max(dMin, Math.min(dMax, Math.max(lo + 1, curHi)));
-
   const span = Math.max(1e-6, dMax - dMin);
   const pct = (v) => ((v - dMin) / span) * 100;
-
   useEffect(() => {
     const onMove = (e) => {
       const which = draggingRef.current;
@@ -3191,7 +1276,7 @@ function DualThumbRateSlider({ domainMin = 0, domainMax = 15000, min, max, onCha
       if (draggingRef.current !== null) {
         draggingRef.current = null;
         frozenDomainRef.current = null;
-        setDragSession((t) => t + 1);
+        setDragSession(t => t+1);
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -3203,113 +1288,26 @@ function DualThumbRateSlider({ domainMin = 0, domainMax = 15000, min, max, onCha
       window.removeEventListener('pointercancel', onUp);
     };
   }, [disabled]);
-
   const pLo = pct(lo);
   const pHi = pct(hi);
-
   const startDrag = (thumb) => {
     if (disabled) return;
     frozenDomainRef.current = { min: domainMin, max: domainMax };
     draggingRef.current = thumb;
-    setDragSession((s) => s + 1);
+    setDragSession(s => s+1);
   };
-
   return (
     <div style={{ userSelect: 'none', touchAction: 'none', opacity: disabled ? 0.55 : 1 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ color: '#22d3ee', fontWeight: 900, fontSize: 13 }}>
-          Low: {lo} <span style={{ color: '#64748b', fontWeight: 800 }}>{currency}</span>
-        </span>
-        <span style={{ color: '#e5e7eb', fontWeight: 900, fontSize: 13 }}>
-          High: {hi} <span style={{ color: '#64748b', fontWeight: 800 }}>{currency}</span>
-        </span>
-        <span style={{ color: '#94a3b8', fontWeight: 800, fontSize: 11 }}>Span: {Math.max(0, hi - lo)}</span>
+        <span style={{ color: 'var(--primary-dark)', fontWeight: 900, fontSize: 13 }}>Low: {lo} <span style={{ color: 'var(--gray-500)', fontWeight: 800 }}>{currency}</span></span>
+        <span style={{ color: 'var(--gray-900)', fontWeight: 900, fontSize: 13 }}>High: {hi} <span style={{ color: 'var(--gray-500)', fontWeight: 800 }}>{currency}</span></span>
+        <span style={{ color: 'var(--gray-500)', fontWeight: 800, fontSize: 11 }}>Span: {Math.max(0, hi - lo)}</span>
       </div>
-      <div
-        ref={trackRef}
-        style={{
-          position: 'relative',
-          height: 56,
-          minHeight: 52,
-          cursor: disabled ? 'not-allowed' : 'default'
-        }}
-      >
-        <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            top: '50%',
-            height: 12,
-            marginTop: -6,
-            borderRadius: 999,
-            background: 'rgba(148,163,184,0.14)',
-            border: '1px solid rgba(148,163,184,0.22)'
-          }}
-        />
-        <div
-          style={{
-            position: 'absolute',
-            left: `${pLo}%`,
-            width: `${Math.max(0, pHi - pLo)}%`,
-            top: '50%',
-            height: 12,
-            marginTop: -6,
-            borderRadius: 999,
-            background: 'linear-gradient(90deg, rgba(34,211,238,0.45), rgba(14,165,233,0.55))',
-            pointerEvents: 'none'
-          }}
-        />
-        <button
-          type="button"
-          aria-label="Minimum hourly rate"
-          disabled={disabled}
-          onPointerDown={(e) => {
-            if (disabled) return;
-            e.preventDefault();
-            startDrag('low');
-          }}
-          style={{
-            position: 'absolute',
-            left: `${pLo}%`,
-            top: '50%',
-            width: 22,
-            height: 22,
-            marginLeft: -11,
-            marginTop: -11,
-            borderRadius: 999,
-            border: '2px solid #22d3ee',
-            background: 'rgba(2,6,23,0.95)',
-            cursor: disabled ? 'not-allowed' : 'grab',
-            padding: 0,
-            boxShadow: '0 2px 10px rgba(0,0,0,0.35)'
-          }}
-        />
-        <button
-          type="button"
-          aria-label="Maximum hourly rate"
-          disabled={disabled}
-          onPointerDown={(e) => {
-            if (disabled) return;
-            e.preventDefault();
-            startDrag('high');
-          }}
-          style={{
-            position: 'absolute',
-            left: `${pHi}%`,
-            top: '50%',
-            width: 22,
-            height: 22,
-            marginLeft: -11,
-            marginTop: -11,
-            borderRadius: 999,
-            border: '2px solid #38bdf8',
-            background: 'rgba(2,6,23,0.95)',
-            cursor: disabled ? 'not-allowed' : 'grab',
-            padding: 0,
-            boxShadow: '0 2px 10px rgba(0,0,0,0.35)'
-          }}
-        />
+      <div ref={trackRef} style={{ position: 'relative', height: 56, minHeight: 52, cursor: disabled ? 'not-allowed' : 'default' }}>
+        <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 12, marginTop: -6, borderRadius: 999, background: 'rgba(148,163,184,0.14)', border: '1px solid rgba(148,163,184,0.22)' }} />
+        <div style={{ position: 'absolute', left: `${pLo}%`, width: `${Math.max(0, pHi - pLo)}%`, top: '50%', height: 12, marginTop: -6, borderRadius: 999, background: 'linear-gradient(90deg, rgba(34,211,238,0.45), rgba(14,165,233,0.55))', pointerEvents: 'none' }} />
+        <button type="button" disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.preventDefault(); startDrag('low'); }} style={{ position: 'absolute', left: `${pLo}%`, top: '50%', width: 22, height: 22, marginLeft: -11, marginTop: -11, borderRadius: 999, border: '2px solid var(--primary)', background: 'var(--primary-dark)', cursor: disabled ? 'not-allowed' : 'grab', padding: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.35)' }} />
+        <button type="button" disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.preventDefault(); startDrag('high'); }} style={{ position: 'absolute', left: `${pHi}%`, top: '50%', width: 22, height: 22, marginLeft: -11, marginTop: -11, borderRadius: 999, border: '2px solid #38bdf8', background: 'var(--primary-dark)', cursor: disabled ? 'not-allowed' : 'grab', padding: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.35)' }} />
       </div>
     </div>
   );

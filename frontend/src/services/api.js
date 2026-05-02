@@ -117,6 +117,7 @@ export const fetchDiscountBanner = () => api.get('/public/discount-banner');
 export const previewDiscount = (payload) => api.post('/public/discounts/preview', payload);
 
 export const saveGradingConfig = (payload) => api.put('/admin/grading-config', payload);
+export const fetchRoutines = () => api.get('/routines');
 export const createDiscount = (payload) => api.post('/admin/discounts', payload);
 export const fetchAdminDiscounts = () => api.get('/admin/discounts');
 

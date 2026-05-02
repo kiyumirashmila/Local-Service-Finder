@@ -6,6 +6,7 @@ const authRoutes = require("./routes/authRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const publicRoutes = require("./routes/publicRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
+const routinesRoutes = require("./routes/routinesRoutes");
 const path = require("path");
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
@@ -30,6 +31,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/bookings", bookingRoutes);
+app.use("/api/routines", routinesRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
