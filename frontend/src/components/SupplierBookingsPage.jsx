@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { fetchMyBookings, fetchPublicCatalogOptions, updateBookingStatus } from '../services/api';
+import { resolveRateFromServicesRates } from '../utils/serviceRateLookup';
 
 function formatMoney(amount, currency) {
   const n = typeof amount === 'number' ? amount : Number(amount) || 0;
@@ -56,12 +57,10 @@ function getBookingServiceRateRange(supplier, serviceName, marketRatesByKey, rat
     let svcMin = 0;
     let svcMax = 0;
 
-    if (supplier?.servicesRates && supplier.servicesRates[svcName] !== undefined) {
-      const rate = Number(supplier.servicesRates[svcName]);
-      if (Number.isFinite(rate)) {
-        svcMin = rate;
-        svcMax = rate;
-      }
+    const supplierRate = resolveRateFromServicesRates(supplier?.servicesRates, svcName);
+    if (supplierRate !== undefined && Number.isFinite(supplierRate) && supplierRate > 0) {
+      svcMin = supplierRate;
+      svcMax = supplierRate;
     }
 
     if (svcMin === 0) {

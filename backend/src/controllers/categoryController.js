@@ -1,6 +1,10 @@
 const Category = require("../models/Category");
 const Service = require("../models/Service");
 const User = require("../models/User");
+const MarketResearch = require("../models/MarketResearch");
+const CatalogRequest = require("../models/CatalogRequest");
+
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Helper: generate a normalized code prefix from category name
 // Example: "Plumbing Services" → "PLUMBING-SERVICES"
@@ -90,12 +94,64 @@ const updateCategory = async (req, res, next) => {
   try {
     const row = await Category.findById(req.params.id);
     if (!row) return res.status(404).json({ message: "Category not found." });
+    const previousName = String(row.name || "").trim();
     const { name, description, active } = req.body || {};
+    let nextName = previousName;
+    if (name !== undefined) nextName = String(name || "").trim();
+
     // Update fields only if provided
-    if (name !== undefined) row.name = String(name || "").trim();
+    if (name !== undefined) row.name = nextName;
     if (description !== undefined) row.description = String(description || "").trim();
     if (active !== undefined) row.active = !!active;
     await row.save();
+
+    // Keep denormalized category strings + Service.categoryId in sync whenever the client sends `name`.
+    if (name !== undefined && nextName) {
+      const serviceMatch = [{ categoryId: row._id }];
+      if (previousName) {
+        serviceMatch.push({
+          category: new RegExp(`^${escapeRegex(previousName)}$`, "i")
+        });
+      }
+      await Service.updateMany(
+        { $or: serviceMatch },
+        { $set: { category: nextName, categoryId: row._id } }
+      );
+
+      const rxCanon = new RegExp(`^${escapeRegex(nextName)}$`, "i");
+      await Service.updateMany(
+        { category: rxCanon },
+        { $set: { category: nextName, categoryId: row._id } }
+      );
+
+      if (previousName) {
+        const rxPrev = new RegExp(`^${escapeRegex(previousName)}$`, "i");
+        await Promise.all([
+          User.updateMany(
+            {
+              role: "supplier",
+              $or: [{ category: rxPrev }, { serviceCategory: rxPrev }]
+            },
+            { $set: { category: nextName, serviceCategory: nextName } }
+          ),
+          MarketResearch.updateMany({ category: rxPrev }, { $set: { category: nextName } }),
+          CatalogRequest.updateMany({ category: rxPrev }, { $set: { category: nextName } })
+        ]);
+      }
+
+      await Promise.all([
+        User.updateMany(
+          {
+            role: "supplier",
+            $or: [{ category: rxCanon }, { serviceCategory: rxCanon }]
+          },
+          { $set: { category: nextName, serviceCategory: nextName } }
+        ),
+        MarketResearch.updateMany({ category: rxCanon }, { $set: { category: nextName } }),
+        CatalogRequest.updateMany({ category: rxCanon }, { $set: { category: nextName } })
+      ]);
+    }
+
     return res.status(200).json({
       id: row._id,
       name: row.name,
@@ -123,7 +179,12 @@ const deleteCategory = async (req, res, next) => {
     // 2. Cascade: delete all services that belong to this category
     // This prevents orphaned services
     try {
-      await Service.deleteMany({ category: categoryName });
+      await Service.deleteMany({
+        $or: [
+          { categoryId: row._id },
+          { category: new RegExp(`^${escapeRegex(categoryName)}$`, "i") }
+        ]
+      });
       
       // 3. Cascade: find all suppliers with this category and ban them
       // This freezes their accounts because their category no longer exists

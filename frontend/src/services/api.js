@@ -98,6 +98,8 @@ export const deleteAdminComplaint = (bookingId) =>
 
 export const fetchRecentSuppliers = (limit = 4) =>
   api.get('/public/suppliers/recent', { params: { limit } });
+
+export const fetchPublicSupplierById = (supplierId) => api.get(`/public/suppliers/${supplierId}`);
 export const fetchSupplierBookedTimes = (supplierId, date) =>
   api.get(`/public/suppliers/${supplierId}/booked-times`, { params: { date } });
 
@@ -108,6 +110,7 @@ export const fetchAdminCatalogOptions = () => api.get('/admin/catalog/options');
 
 /** Admin: all service master rows including inactive (requires admin JWT). */
 export const fetchAdminServices = (params) => api.get('/admin/services', { params });
+export const backfillAdminServiceCategoryLinks = () => api.post('/admin/services/backfill-category-links');
 export const fetchAdminBookings = () => api.get('/admin/bookings');
 export const fetchAdminReviews = () => api.get('/admin/reviews');
 export const deleteAdminReview = (bookingId) => api.delete(`/admin/reviews/${bookingId}`);
@@ -120,6 +123,10 @@ export const saveGradingConfig = (payload) => api.put('/admin/grading-config', p
 export const fetchRoutines = () => api.get('/routines');
 export const createDiscount = (payload) => api.post('/admin/discounts', payload);
 export const fetchAdminDiscounts = () => api.get('/admin/discounts');
+export const fetchDemandPredictionData = (params) => api.get('/admin/demand-prediction', { params });
+
+/** Admin: fetch raw ServiceRequestFact records with optional filtering (requires admin JWT). */
+export const fetchServiceRequestFacts = (params) => api.get('/admin/service-request-facts', { params });
 
 export const createBooking = (payload) => api.post('/bookings', payload);
 

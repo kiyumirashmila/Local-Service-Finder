@@ -1,6 +1,13 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
-import { createBooking, fetchPublicCatalogOptions, fetchSupplierBookedTimes, previewDiscount } from '../services/api';
+import {
+  createBooking,
+  fetchPublicCatalogOptions,
+  fetchPublicSupplierById,
+  fetchSupplierBookedTimes,
+  previewDiscount
+} from '../services/api';
+import { resolveRateFromServicesRates } from '../utils/serviceRateLookup';
 
 function normCatalogKey(s) {
   return String(s || '')
@@ -37,12 +44,10 @@ function findSupplierServiceRate(service, svcName, marketRatesByKey, rateLookupC
   let svcMax = 0;
   let currency = 'LKR';
 
-  if (service?.servicesRates && service.servicesRates[svcName] !== undefined) {
-    const rate = Number(service.servicesRates[svcName]);
-    if (Number.isFinite(rate)) {
-      svcMin = rate;
-      svcMax = rate;
-    }
+  const supplierRate = resolveRateFromServicesRates(service?.servicesRates, svcName);
+  if (supplierRate !== undefined && Number.isFinite(supplierRate) && supplierRate > 0) {
+    svcMin = supplierRate;
+    svcMax = supplierRate;
   }
 
   if (svcMin === 0 && marketRatesByKey) {
@@ -154,12 +159,54 @@ const BookingPage = ({
   const { isAuthenticated: isAuthenticatedCtx, user: ctxUser } = useContext(AuthContext);
   const isAuthenticated = isAuthenticatedProp ?? isAuthenticatedCtx;
   const headerUser = user ?? ctxUser;
-  const providerName = service?.providerName || 'Provider';
-  const providerRole = service?.category || 'Local Professional';
-  const initialServiceTitle = String(service?.title || 'Service').trim() || 'Service';
-  const location = service?.location || '';
-  const experience = service?.experience || '';
-  const avatarUrl = service?.avatarUrl || service?.avatar || '';
+
+  const [supplierLiveProfile, setSupplierLiveProfile] = useState(null);
+
+  useEffect(() => {
+    const id = service?.supplierId;
+    if (!id) {
+      setSupplierLiveProfile(null);
+      return undefined;
+    }
+    let cancelled = false;
+    fetchPublicSupplierById(id)
+      .then((res) => {
+        if (!cancelled) setSupplierLiveProfile(res.data || null);
+      })
+      .catch(() => {
+        if (!cancelled) setSupplierLiveProfile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [service?.supplierId]);
+
+  const bookingService = useMemo(() => {
+    if (!service) return null;
+    const live = supplierLiveProfile;
+    if (!live) return service;
+    const liveRates = live.servicesRates && typeof live.servicesRates === 'object' ? live.servicesRates : {};
+    const sessionRates = service.servicesRates && typeof service.servicesRates === 'object' ? service.servicesRates : {};
+    return {
+      ...service,
+      ...live,
+      category: String(service.category || '').trim() || live.category || '',
+      servicesRates: { ...sessionRates, ...liveRates },
+      services:
+        Array.isArray(service.services) && service.services.length > 0
+          ? service.services
+          : Array.isArray(live.services)
+            ? live.services
+            : []
+    };
+  }, [service, supplierLiveProfile]);
+
+  const providerName = bookingService?.providerName || 'Provider';
+  const providerRole = bookingService?.category || 'Local Professional';
+  const initialServiceTitle = String(bookingService?.title || 'Service').trim() || 'Service';
+  const location = bookingService?.location || '';
+  const experience = bookingService?.experience || '';
+  const avatarUrl = bookingService?.avatarUrl || bookingService?.avatar || '';
 
   const [monthCursor, setMonthCursor] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(null);
@@ -193,18 +240,20 @@ const BookingPage = ({
   // Parse supplier's services: prefer services array, then servicesRates keys, fallback to splitting the title
   const supplierServicesList = useMemo(() => {
     // 1. Use the direct services array from the supplier (passed via booking payload)
-    if (Array.isArray(service?.services) && service.services.length > 0) {
-      return service.services.map(s => String(s).trim()).filter(Boolean);
+    if (Array.isArray(bookingService?.services) && bookingService.services.length > 0) {
+      return bookingService.services.map((s) => String(s).trim()).filter(Boolean);
     }
     // 2. Fall back to servicesRates keys
-    const ratesKeys = service?.servicesRates ? Object.keys(service.servicesRates).filter(k => k && String(k).trim()) : [];
+    const ratesKeys = bookingService?.servicesRates
+      ? Object.keys(bookingService.servicesRates).filter((k) => k && String(k).trim())
+      : [];
     if (ratesKeys.length > 0) return ratesKeys;
     // 3. Fallback: split comma-separated title into individual services
     if (initialServiceTitle && initialServiceTitle !== 'Service') {
-      return initialServiceTitle.split(',').map(s => s.trim()).filter(Boolean);
+      return initialServiceTitle.split(',').map((s) => s.trim()).filter(Boolean);
     }
     return initialServiceTitle ? [initialServiceTitle] : [];
-  }, [service?.services, service?.servicesRates, initialServiceTitle]);
+  }, [bookingService?.services, bookingService?.servicesRates, initialServiceTitle]);
 
   const [selectedServiceNames, setSelectedServiceNames] = useState(
     () => supplierServicesList.length > 0 ? [...supplierServicesList] : []
@@ -212,7 +261,7 @@ const BookingPage = ({
 
   useEffect(() => {
     setSelectedServiceNames(supplierServicesList.length > 0 ? [...supplierServicesList] : []);
-  }, [supplierServicesList, service?.supplierId]);
+  }, [supplierServicesList, bookingService?.supplierId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -279,7 +328,7 @@ const BookingPage = ({
     let currency = 'LKR';
 
     for (const svcName of selectedServiceNames) {
-      const resolved = findSupplierServiceRate(service, svcName, marketRatesByKey, rateLookupCategoryNorm);
+      const resolved = findSupplierServiceRate(bookingService, svcName, marketRatesByKey, rateLookupCategoryNorm);
       const svcMin = resolved.svcMin;
       const svcMax = resolved.svcMax;
       if (resolved.currency) currency = resolved.currency;
@@ -295,7 +344,7 @@ const BookingPage = ({
       maxRatePerHour: totalMax,
       currency: currency,
     };
-  }, [marketRatesByKey, rateLookupCategoryNorm, selectedServiceNames, service?.servicesRates]);
+  }, [marketRatesByKey, rateLookupCategoryNorm, selectedServiceNames, bookingService?.servicesRates]);
 
   const selectedServiceRateLabel = useMemo(
     () => formatCatalogRateLine(selectedServiceRateRange),
@@ -313,8 +362,10 @@ const BookingPage = ({
 
   const profileAddress = String(headerUser?.address || '').trim();
   const profileCity = String(headerUser?.city || '').trim();
-  const supplierCoverageCity = String(service?.serviceCoverageCity || service?.city || service?.location || '').trim();
-  const supplierCoverageDistrict = String(service?.serviceCoverageDistrict || '').trim();
+  const supplierCoverageCity = String(
+    bookingService?.serviceCoverageCity || bookingService?.city || bookingService?.location || ''
+  ).trim();
+  const supplierCoverageDistrict = String(bookingService?.serviceCoverageDistrict || '').trim();
   const finalLocationAddress = locationMode === 'profile'
     ? profileAddress
     : locationAddress.trim();
@@ -379,7 +430,7 @@ const BookingPage = ({
     finalLocationCity &&
     !locationValidationError
   );
-  const supplierId = service?.supplierId || '';
+  const supplierId = bookingService?.supplierId || '';
 
   useEffect(() => {
     const selectedCity = String(
@@ -1433,7 +1484,7 @@ const BookingPage = ({
                     {serviceOptions.length > 0 ? (
                       <div className="meta-service-select" style={{ padding: 0, border: 'none', background: 'transparent' }}>
                         {serviceOptions.map((svc) => {
-                          const supplierRate = service?.servicesRates?.[svc];
+                          const supplierRate = resolveRateFromServicesRates(bookingService?.servicesRates, svc);
                           const hasRate = supplierRate !== undefined && Number.isFinite(Number(supplierRate)) && Number(supplierRate) > 0;
                           return (
                             <label key={svc} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', cursor: 'pointer' }}>

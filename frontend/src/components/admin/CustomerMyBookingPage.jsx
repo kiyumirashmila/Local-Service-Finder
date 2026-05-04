@@ -11,6 +11,7 @@ import {
   updateBookingComplaint,
   updateBookingReview,
 } from '../../services/api';
+import { resolveRateFromServicesRates } from '../../utils/serviceRateLookup';
 import Header from '../Header';
 import Footer from '../Footer';
 import '../../styles/HomePage.css';
@@ -158,12 +159,10 @@ function getBookingServiceRateRange(supplier, serviceName, marketRatesByKey, rat
     let svcMax = 0;
 
     // Prefer supplier fixed rates if present (same approach as BookingPage).
-    if (supplier?.servicesRates && supplier.servicesRates[svcName] !== undefined) {
-      const rate = Number(supplier.servicesRates[svcName]);
-      if (Number.isFinite(rate)) {
-        svcMin = rate;
-        svcMax = rate;
-      }
+    const resolvedRate = resolveRateFromServicesRates(supplier?.servicesRates, svcName);
+    if (resolvedRate !== undefined && Number.isFinite(resolvedRate) && resolvedRate > 0) {
+      svcMin = resolvedRate;
+      svcMax = resolvedRate;
     }
 
     if (svcMin === 0 && marketRatesByKey) {

@@ -2,6 +2,8 @@ const Booking = require("../models/Booking");
 const User = require("../models/User");
 const Discount = require("../models/Discount");
 const { buildCatalogOptions } = require("../utils/buildCatalogOptions");
+const { servicesRatesToPlain } = require("../utils/servicesRatesPlain");
+const { resolveServiceRateFromRates } = require("../utils/resolveServiceRateFromRates");
 
 function normCatalogKey(s) {
   return String(s || "").trim().toLowerCase();
@@ -75,33 +77,7 @@ function createScratchReward() {
 }
 
 function findSupplierServiceRate(supplier, serviceName) {
-  const rates = supplier?.servicesRates;
-  if (!rates || typeof rates !== "object") return null;
-
-  const parts = Array.isArray(serviceName)
-    ? serviceName
-    : String(serviceName || "")
-        .split(",")
-        .map((s) => String(s).trim())
-        .filter(Boolean);
-
-  if (!parts.length) return null;
-
-  let total = 0;
-  let foundAny = false;
-  for (const part of parts) {
-    const rawRate =
-      typeof rates.get === "function"
-        ? rates.get(part)
-        : rates[part];
-    const rate = Number(rawRate);
-    if (Number.isFinite(rate) && rate > 0) {
-      total += rate;
-      foundAny = true;
-    }
-  }
-
-  return foundAny ? total : null;
+  return resolveServiceRateFromRates(supplier?.servicesRates, serviceName);
 }
 
 const tierFromXp = (xp) => {
@@ -491,10 +467,7 @@ const listMyBookings = async (req, res, next) => {
               totalRatings: Number(b.supplierId.totalRatings || 0),
               xp: Number(b.supplierId.xp || 0),
               tierLevel: b.supplierId.tierLevel || "Bronze",
-              servicesRates:
-                b.supplierId.servicesRates && typeof b.supplierId.servicesRates === "object"
-                  ? Object.fromEntries(b.supplierId.servicesRates)
-                  : {},
+              servicesRates: servicesRatesToPlain(b.supplierId.servicesRates),
             }
           : null,
         supplierNameSnapshot: b.supplierNameSnapshot || b.supplierId?.fullName || "",

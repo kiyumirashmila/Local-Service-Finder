@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { fetchMyBookings, fetchPublicCatalogOptions, respondBookingComplaint, fetchGradingConfig } from '../services/api';
 import { ensureCatalogDefaults, getCatalog } from '../utils/catalogStore';
+import { alignRateKeysToServices } from '../utils/serviceRateLookup';
 
 const normalize = (v) => String(v || '').trim();
 
@@ -65,7 +66,7 @@ const isWithinRecentDays = (dateIso, days) => {
 };
 
 const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
-  const { user, isAuthenticated, updateSupplierProfileReal, deleteAccountReal, changePasswordReal } = useContext(AuthContext);
+  const { user, isAuthenticated, updateSupplierProfileReal, deleteAccountReal, changePasswordReal, reloadMe } = useContext(AuthContext);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1924,6 +1925,7 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
                           formData.append('phone', user?.phone || '');
                           formData.append('address', user?.address || '');
                           formData.append('city', user?.city || '');
+                          formData.append('district', user?.district || '');
                           formData.append('category', user?.category || '');
                           formData.append('serviceCategory', user?.serviceCategory || '');
                           formData.append('serviceCategoryOther', user?.serviceCategoryOther || '');
@@ -1935,14 +1937,18 @@ const SupplierProfilePage = ({ onBack, onViewFeedbackSummary }) => {
                           formData.append('bio', user?.bio || '');
                           // Build merged rates
                           const mergedRates = { ...(user?.servicesRates || {}), ...priceListDraft };
-                          // Convert string values to numbers
-                          const cleanRates = {};
+                          const prelim = {};
                           for (const [k, v] of Object.entries(mergedRates)) {
+                            const key = String(k || '').trim();
+                            if (!key) continue;
                             const n = Number(v);
-                            if (Number.isFinite(n) && n > 0) cleanRates[k] = n;
+                            if (Number.isFinite(n) && n > 0) prelim[key] = n;
                           }
+                          const cleanRates = alignRateKeysToServices(user?.services || [], prelim);
                           formData.append('servicesRates', JSON.stringify(cleanRates));
-                          await updateSupplierProfileReal(formData);
+                          const updatedUser = await updateSupplierProfileReal(formData);
+                          setPriceListDraft({ ...(updatedUser?.servicesRates || {}) });
+                          if (typeof reloadMe === 'function') await reloadMe().catch(() => {});
                           setSuccessMessage('Price list updated successfully!');
                         } catch (err) {
                           setError(err?.response?.data?.message || err?.message || 'Failed to save price list.');

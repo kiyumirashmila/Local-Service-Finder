@@ -5,6 +5,8 @@ const cloudinary = require("../config/cloudinary");
 const { signToken } = require("../config/jwt");
 const User = require("../models/User");
 const { sendMail } = require("../utils/mailer");
+const { resolveCanonicalCategoryName } = require("../utils/resolveCanonicalCategoryName");
+const { servicesRatesToPlain, plainToServicesRatesMap } = require("../utils/servicesRatesPlain");
 
 const RESET_OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const resetOtpStore = new Map(); // key: normalized email -> { otp, expiresAt }
@@ -28,7 +30,7 @@ const serializeUser = (userDoc) => {
     category: user.category || user.serviceCategory || "",
     services: Array.isArray(user.services) ? user.services : [],
     serviceOther: user.serviceOther || "",
-    servicesRates: user.servicesRates ? Object.fromEntries(user.servicesRates) : {},
+    servicesRates: servicesRatesToPlain(user.servicesRates),
     scratchCoupons: Array.isArray(user.scratchCoupons)
       ? user.scratchCoupons.map((c) => ({
           code: String(c?.code || "").trim().toUpperCase(),
@@ -316,6 +318,8 @@ const signupSupplier = async (req, res, next) => {
       return res.status(400).json({ message: "Please provide a category." });
     }
 
+    const categoryDisplay = await resolveCanonicalCategoryName(resolvedCategory);
+
     const allowedCategories = ["plumber", "electrician", "cleaner", "carpenter", "other"];
     const normalizedServiceCategory = String(serviceCategory || "").toLowerCase();
     if (!normalizedServiceCategory || !allowedCategories.includes(normalizedServiceCategory)) {
@@ -377,7 +381,7 @@ const signupSupplier = async (req, res, next) => {
       district: String(district || "").trim(),
 
       avatarUrl,
-      category: resolvedCategory,
+      category: categoryDisplay,
       serviceCategory: normalizedServiceCategory,
       serviceCategoryOther: serviceCategoryOther || (normalizedServiceCategory === "other" ? resolvedCategory : ""),
       services: parsedServices.length ? parsedServices : [String(serviceOther || "").trim()].filter(Boolean),
@@ -562,14 +566,17 @@ const updateSupplierProfile = async (req, res, next) => {
 
     const allServices = [...parsedServices, ...(serviceOther ? [String(serviceOther).trim()] : [])].filter(Boolean);
 
+    const ratesProvided = Object.prototype.hasOwnProperty.call(req.body || {}, "servicesRates");
     let parsedRates = {};
-    if (typeof servicesRates === 'string') {
+    if (typeof servicesRates === "string") {
       try {
         const parsed = JSON.parse(servicesRates);
-        if (typeof parsed === 'object' && parsed !== null) {
+        if (typeof parsed === "object" && parsed !== null) {
           parsedRates = parsed;
         }
-      } catch (_e) { }
+      } catch (_e) {
+        /* ignore */
+      }
     }
 
     const validationErrors = [
@@ -606,10 +613,22 @@ const updateSupplierProfile = async (req, res, next) => {
     }
 
     const allowedCategories = ["plumber", "electrician", "cleaner", "carpenter", "other"];
-    if (!allowedCategories.includes(serviceCategory)) {
-      return res.status(400).json({ message: "Invalid service category." });
+    const rawServiceCategory = String(serviceCategory || "").trim();
+    let legacyCategory = rawServiceCategory.toLowerCase();
+    const categoryLabel = String(category || "").trim();
+    let otherLabel = String(serviceCategoryOther || "").trim();
+
+    if (!allowedCategories.includes(legacyCategory)) {
+      // Suppliers from the catalog often have a display name in `serviceCategory` (e.g. "Ceeling", "Taxi").
+      const displayLabel = categoryLabel || rawServiceCategory || otherLabel;
+      if (!displayLabel) {
+        return res.status(400).json({ message: "Invalid service category." });
+      }
+      legacyCategory = "other";
+      otherLabel = displayLabel;
     }
-    if (serviceCategory === "other" && !serviceCategoryOther) {
+
+    if (legacyCategory === "other" && !otherLabel) {
       return res.status(400).json({ message: "Please specify the other service type." });
     }
 
@@ -618,17 +637,24 @@ const updateSupplierProfile = async (req, res, next) => {
     const user = await User.findById(req.auth.userId);
     if (!user) return res.status(404).json({ message: "User not found." });
 
+    const categoryForDisplay = categoryLabel || (legacyCategory === "other" ? otherLabel : rawServiceCategory);
+    const categoryCanonical = categoryForDisplay
+      ? await resolveCanonicalCategoryName(categoryForDisplay)
+      : "";
+
     user.fullName = fullName;
     user.phone = phone;
     user.address = address;
     user.city = city;
     if (district !== undefined) user.district = String(district || "").trim();
-    user.category = String(category || serviceCategory).trim();
-    user.serviceCategory = serviceCategory;
-    user.serviceCategoryOther = serviceCategory === "other" ? String(serviceCategoryOther) : "";
+    user.category = String(categoryCanonical || categoryForDisplay || "").trim();
+    user.serviceCategory = legacyCategory;
+    user.serviceCategoryOther = legacyCategory === "other" ? String(otherLabel) : "";
     user.services = parsedServices;
     user.serviceOther = String(serviceOther || "").trim();
-    user.servicesRates = parsedRates;
+    if (ratesProvided) {
+      user.servicesRates = plainToServicesRatesMap(parsedRates);
+    }
     user.yearsOfExperience = years;
     user.monthsOfExperience = Number(monthsOfExperience) || 0;
     user.nic = String(nic || "").trim();

@@ -1,4 +1,5 @@
 const Service = require("../models/Service");
+const { resolveCategoryRef } = require("../utils/resolveCanonicalCategoryName");
 
 const getServices = async (req, res, next) => {
   try {
@@ -55,10 +56,12 @@ const createService = async (req, res, next) => {
       throw new Error("Please provide all required fields");
     }
 
+    const categoryCanonical = await resolveCanonicalCategoryName(category);
+
     const service = await Service.create({
       title,
       providerName,
-      category,
+      category: categoryCanonical,
       location,
       contact,
       description,
@@ -84,7 +87,11 @@ const updateService = async (req, res, next) => {
       req.body || {};
     if (title !== undefined) service.title = title;
     if (providerName !== undefined) service.providerName = providerName;
-    if (category !== undefined) service.category = category;
+    if (category !== undefined) {
+      const { name: catName, categoryId } = await resolveCategoryRef(category);
+      service.category = catName;
+      service.categoryId = categoryId || null;
+    }
     if (location !== undefined) service.location = location;
     if (contact !== undefined) service.contact = contact;
     if (description !== undefined) service.description = description;

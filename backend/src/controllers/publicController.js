@@ -3,7 +3,50 @@ const Booking = require("../models/Booking");
 const GradingConfig = require("../models/GradingConfig");
 const Discount = require("../models/Discount");
 const { buildCatalogOptions } = require("../utils/buildCatalogOptions");
+const { servicesRatesToPlain } = require("../utils/servicesRatesPlain");
 const { DEFAULT_GRADING_TIERS } = require("../constants/gradingDefaults");
+
+const mapSupplierPublic = (s) => ({
+  id: s._id,
+  fullName: s.fullName,
+  email: s.email,
+  phone: s.phone,
+  city: s.city,
+  district: s.district || "",
+  avatar: s.avatarUrl || "",
+  category: s.category || "",
+  serviceCategory: s.serviceCategory || "",
+  serviceCategoryOther: s.serviceCategoryOther || "",
+  yearsOfExperience: s.yearsOfExperience || 0,
+  supplierGrading: s.supplierGrading || null,
+  averageRating: s.averageRating || 0,
+  totalRatings: s.totalRatings || 0,
+  services: s.services || [],
+  servicesRates: servicesRatesToPlain(s.servicesRates)
+});
+
+const getSupplierPublicById = async (req, res, next) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ message: "Supplier id is required." });
+
+    const s = await User.findOne({
+      _id: id,
+      role: "supplier",
+      supplierApprovalStatus: "approved"
+    })
+      .select(
+        "fullName email phone city district avatarUrl category serviceCategory serviceCategoryOther yearsOfExperience supplierGrading averageRating totalRatings services servicesRates"
+      )
+      .lean();
+
+    if (!s) return res.status(404).json({ message: "Supplier not found." });
+
+    return res.status(200).json(mapSupplierPublic(s));
+  } catch (error) {
+    return next(error);
+  }
+};
 
 const getRecentApprovedSuppliers = async (req, res, next) => {
   try {
@@ -25,23 +68,7 @@ const getRecentApprovedSuppliers = async (req, res, next) => {
     
     const suppliers = await query;
 
-    const mapped = suppliers.map((s) => ({
-      id: s._id,
-      fullName: s.fullName,
-      email: s.email,
-      phone: s.phone,
-      city: s.city,
-      district: s.district || "",
-      avatar: s.avatarUrl || "",
-      serviceCategory: s.serviceCategory || "",
-      serviceCategoryOther: s.serviceCategoryOther || "",
-      yearsOfExperience: s.yearsOfExperience || 0,
-      supplierGrading: s.supplierGrading || null,
-      averageRating: s.averageRating || 0,
-      totalRatings: s.totalRatings || 0,
-      services: s.services || [],
-      servicesRates: s.servicesRates ? Object.fromEntries(s.servicesRates) : {}
-    }));
+    const mapped = suppliers.map((s) => mapSupplierPublic(s));
 
     return res.status(200).json({ suppliers: mapped });
   } catch (error) {
@@ -185,4 +212,12 @@ const previewDiscount = async (req, res, next) => {
   }
 };
 
-module.exports = { getRecentApprovedSuppliers, getCatalogOptions, getGradingConfig, getSupplierBookedTimes, getActiveDiscountBanner, previewDiscount };
+module.exports = {
+  getRecentApprovedSuppliers,
+  getSupplierPublicById,
+  getCatalogOptions,
+  getGradingConfig,
+  getSupplierBookedTimes,
+  getActiveDiscountBanner,
+  previewDiscount
+};

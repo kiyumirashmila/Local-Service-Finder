@@ -17,6 +17,7 @@ const {
   deleteMarketResearch,
   getAdminCatalogOptions,
   listAdminServices,
+  backfillServiceCategoryLinks,
   listAdminBookings,
   listAdminReviews,
   deleteAdminReview,
@@ -28,7 +29,9 @@ const {
   deleteComplaint,
   recoverSupplierProfile,
   createDiscount,
-  listDiscounts
+  listDiscounts,
+  getServiceRequestFacts,
+  getDemandPredictionData
 } = require("../controllers/adminController");
 
 const router = express.Router();
@@ -47,6 +50,9 @@ router.post("/suppliers/:id/recover", ...requireAdmin, recoverSupplierProfile);
 router.post("/discounts", ...requireAdmin, createDiscount);
 router.get("/discounts", ...requireAdmin, listDiscounts);
 
+router.get("/service-request-facts", ...requireAdmin, getServiceRequestFacts);
+router.get("/demand-prediction", ...requireAdmin, getDemandPredictionData);
+
 router.post("/catalog/requests", ...requireAdmin, createCatalogRequest);
 router.get("/catalog/requests", ...requireAdmin, listCatalogRequests);
 router.get("/catalog/requests/count", ...requireAdmin, countPendingCatalogRequests);
@@ -58,6 +64,7 @@ router.delete("/market-research/:id", ...requireAdmin, deleteMarketResearch);
 
 router.get("/catalog/options", ...requireAdmin, getAdminCatalogOptions);
 router.get("/services", ...requireAdmin, listAdminServices);
+router.post("/services/backfill-category-links", ...requireAdmin, backfillServiceCategoryLinks);
 router.get("/bookings", ...requireAdmin, listAdminBookings);
 router.get("/reviews", ...requireAdmin, listAdminReviews);
 router.delete("/reviews/:id", ...requireAdmin, deleteAdminReview);

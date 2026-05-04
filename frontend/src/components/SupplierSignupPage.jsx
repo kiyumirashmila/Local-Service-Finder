@@ -130,6 +130,27 @@ const IconStar = () => (
   </svg>
 );
 
+/** Select value for “Other” in service picker (must not collide with a real service name). */
+const SERVICE_PICK_OTHER = '__service_other__';
+const SERVICE_PICK_PREFIX = 'svcpick:';
+
+function encodeServicePickValue(cat, svc) {
+  return `${SERVICE_PICK_PREFIX}${JSON.stringify({ cat, svc })}`;
+}
+
+function decodeServicePickValue(v) {
+  if (typeof v !== 'string' || !v.startsWith(SERVICE_PICK_PREFIX)) return null;
+  try {
+    const o = JSON.parse(v.slice(SERVICE_PICK_PREFIX.length));
+    const c = String(o?.cat ?? '').trim();
+    const s = String(o?.svc ?? '').trim();
+    if (!c || !s) return null;
+    return { cat: c, svc: s };
+  } catch {
+    return null;
+  }
+}
+
 /* ──────────────────────────────────────────────
    ✦  MAIN COMPONENT
    ────────────────────────────────────────────── */
@@ -161,6 +182,8 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
   const [selectedServices, setSelectedServices] = useState([]);
   const [customServiceInput, setCustomServiceInput] = useState('');
   const [customServices, setCustomServices] = useState([]);
+  const [serviceDropdownSelection, setServiceDropdownSelection] = useState('');
+  const [pendingServiceOther, setPendingServiceOther] = useState(false);
   const [yearsOfExperience, setYearsOfExperience] = useState('');
   const [bio, setBio] = useState('');
 
@@ -198,6 +221,25 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
   }, []);
 
   useEffect(() => {
+    const refreshCatalog = () => {
+      fetchPublicCatalogOptions()
+        .then((res) => {
+          const categories = res.data?.categories || [];
+          const servicesByCategory = res.data?.servicesByCategory || {};
+          if (categories.length) {
+            setCatalogOptions({ categories, servicesByCategory });
+          }
+        })
+        .catch(() => {});
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshCatalog();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
+  useEffect(() => {
     (async () => {
       try {
         const res = await fetchGradingConfig();
@@ -231,12 +273,24 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
 
   const serviceOptions = useMemo(() => {
     if (!category || category === 'other') return [];
-    return catalogOptions.servicesByCategory[category] || [];
+    const map = catalogOptions.servicesByCategory || {};
+    const exact = map[category];
+    if (Array.isArray(exact) && exact.length) return exact;
+    const lower = String(category).trim().toLowerCase();
+    const key = Object.keys(map).find((k) => String(k || '').trim().toLowerCase() === lower);
+    return key ? map[key] || [] : [];
   }, [category, catalogOptions.servicesByCategory]);
 
   useEffect(() => {
     setSelectedServices((prev) => prev.filter((s) => serviceOptions.includes(s)));
   }, [serviceOptions]);
+
+  useEffect(() => {
+    setPendingServiceOther(false);
+    setServiceDropdownSelection('');
+    setCustomServiceInput('');
+    setCustomServices([]);
+  }, [category]);
 
   const allSelectedServices = useMemo(() => {
     const merged = [...selectedServices, ...customServices];
@@ -316,6 +370,9 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
       case 'categoryOther':
         if (category === 'other' && !value) return 'New category is required';
         return '';
+      case 'serviceOther':
+        if (pendingServiceOther && category !== 'other' && !String(value || '').trim()) return 'Enter a service name or pick from the list';
+        return '';
       case 'services':
         if (!value || value.length === 0) return 'At least one service is required';
         return '';
@@ -333,15 +390,8 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
     setTouched(prev => ({ ...prev, [name]: true }));
   }
 
-  const toggleService = (serviceName) => {
-    setTouched(prev => ({ ...prev, services: true }));
-    setSelectedServices((prev) =>
-      prev.includes(serviceName) ? prev.filter((s) => s !== serviceName) : [...prev, serviceName]
-    );
-  };
-
   const addCustomService = () => {
-    setTouched(prev => ({ ...prev, services: true }));
+    setTouched(prev => ({ ...prev, services: true, serviceOther: true }));
     const cleaned = customServiceInput.trim();
     if (!cleaned) return;
     const exists = [...selectedServices, ...customServices].some((s) => s.toLowerCase() === cleaned.toLowerCase());
@@ -353,9 +403,30 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
     setCustomServiceInput('');
   };
 
-  const removeCustomService = (serviceName) => {
+  const removeServiceTag = (serviceName) => {
     setTouched(prev => ({ ...prev, services: true }));
+    setSelectedServices((prev) => prev.filter((s) => s !== serviceName));
     setCustomServices((prev) => prev.filter((s) => s !== serviceName));
+  };
+
+  const handleServiceDropdownChange = (e) => {
+    const v = e.target.value;
+    setServiceDropdownSelection('');
+    setTouched(prev => ({ ...prev, services: true }));
+    if (!v) return;
+    if (v === SERVICE_PICK_OTHER) {
+      setPendingServiceOther(true);
+      setCustomServiceInput('');
+      return;
+    }
+    const decoded = decodeServicePickValue(v);
+    if (!decoded) return;
+    setPendingServiceOther(false);
+    const { svc } = decoded;
+    setSelectedServices((prev) => {
+      if (prev.some((s) => s.toLowerCase() === svc.toLowerCase())) return prev;
+      return [...prev, svc];
+    });
   };
 
   const toLegacyCategory = (rawCategory) => {
@@ -419,6 +490,9 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
   const categoryOptions = useMemo(() => {
     return [...(catalogOptions.categories || []).map((name) => ({ value: name, label: name })), { value: 'other', label: 'Other' }];
   }, [catalogOptions.categories]);
+
+  const servicesBoxClass =
+    touched.services ? (validateField('services', allSelectedServices) ? 'invalid' : 'valid') : '';
 
   return (
     <div className="signup-shell">
@@ -1231,7 +1305,7 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
                     setCategory(e.target.value);
                     if (e.target.value !== 'other') {
                       setCategoryOther('');
-                      setTouched(prev => ({...prev, categoryOther: false}));
+                      setTouched(prev => ({ ...prev, categoryOther: false }));
                     }
                   }}
                   onBlur={() => handleBlur('category')}
@@ -1265,7 +1339,7 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
                 </div>
               )}
 
-              {/* Services Selection */}
+              {/* Services: dropdown per category + Other (same pattern as category) */}
               <div className="field full">
                 <label>Services (select one or more)</label>
                 {touched.services && (
@@ -1273,60 +1347,113 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
                     {validateField('services', allSelectedServices) || 'Looks good!'}
                   </div>
                 )}
-                {category !== 'other' && serviceOptions.length > 0 ? (
-                  <div className={`services-box ${touched.services ? (validateField('services', allSelectedServices) ? 'invalid' : 'valid') : ''}`}>
-                    <div className="svc-options">
-                      {serviceOptions.map((svc) => (
-                        <label key={svc} className="svc-opt">
+
+                {category && category !== 'other' && (
+                  <div className={`services-box ${servicesBoxClass}`}>
+                    <select
+                      className={getValidationClass('services', allSelectedServices)}
+                      value={serviceDropdownSelection}
+                      onChange={handleServiceDropdownChange}
+                      onBlur={() => handleBlur('services')}
+                    >
+                      <option value="">Select service</option>
+                      {serviceOptions.length > 0 ? (
+                        <optgroup label={category}>
+                          {serviceOptions.map((svc) => (
+                            <option key={`${category}__${svc}`} value={encodeServicePickValue(category, svc)}>
+                              {svc}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : (
+                        <option value="__no_catalog_services__" disabled>
+                          No catalog services for this category yet — use Other below
+                        </option>
+                      )}
+                      <option value={SERVICE_PICK_OTHER}>Other</option>
+                    </select>
+
+                    {pendingServiceOther && (
+                      <div style={{ marginTop: 14 }}>
+                        <label style={{ fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.03em', color: '#475569', display: 'block', marginBottom: 6 }}>New service</label>
+                        {touched.serviceOther && (
+                          <div className={`Validation-msg ${validateField('serviceOther', customServiceInput) ? 'error' : 'success'}`}>
+                            {validateField('serviceOther', customServiceInput) || 'Looks good!'}
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
                           <input
-                            type="checkbox"
-                            checked={selectedServices.includes(svc)}
-                            onChange={() => toggleService(svc)}
+                            style={{ flex: 1 }}
+                            className={getValidationClass('serviceOther', customServiceInput)}
+                            value={customServiceInput}
+                            onChange={(e) => setCustomServiceInput(e.target.value)}
+                            onBlur={() => handleBlur('serviceOther')}
+                            type="text"
+                            placeholder="e.g., AC repair"
+                            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomService())}
                           />
-                          <span>{svc}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ color: '#64748b', fontWeight: 500, fontSize: 13, marginTop: 4 }}>
-                    No predefined services for this category. Add your own below.
+                          <button type="button" className="btn ghost" style={{ flex: '0 0 auto', padding: '10px 18px' }} onClick={addCustomService}>
+                            <IconPlus /> Add
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {allSelectedServices.length > 0 && (
+                      <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {allSelectedServices.map((svc) => (
+                          <span key={svc} className="service-tag">
+                            {svc}
+                            <button
+                              type="button"
+                              className="remove-tag"
+                              onClick={() => removeServiceTag(svc)}
+                              aria-label="Remove service"
+                            >
+                              <IconX />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
 
-              {/* Custom Service Input */}
-              <div className="field full">
-                <label>Add custom service</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    value={customServiceInput}
-                    onChange={(e) => setCustomServiceInput(e.target.value)}
-                    type="text"
-                    placeholder="e.g., AC repair"
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomService())}
-                  />
-                  <button type="button" className="btn ghost" style={{ flex: '0 0 auto', padding: '10px 18px' }} onClick={addCustomService}>
-                    <IconPlus /> Add
-                  </button>
-                </div>
-                {allSelectedServices.length > 0 && (
-                  <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {allSelectedServices.map((svc) => (
-                      <span key={svc} className="service-tag">
-                        {svc}
-                        {customServices.includes(svc) && (
-                          <button
-                            type="button"
-                            className="remove-tag"
-                            onClick={() => removeCustomService(svc)}
-                            aria-label="Remove service"
-                          >
-                            <IconX />
-                          </button>
-                        )}
-                      </span>
-                    ))}
+                {category === 'other' && (
+                  <div className={`services-box ${servicesBoxClass}`}>
+                    <div style={{ color: '#64748b', fontWeight: 500, fontSize: 13, marginBottom: 8 }}>
+                      Describe each service you offer and add it to your list.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        style={{ flex: 1 }}
+                        value={customServiceInput}
+                        onChange={(e) => setCustomServiceInput(e.target.value)}
+                        type="text"
+                        placeholder="e.g., AC repair"
+                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomService())}
+                      />
+                      <button type="button" className="btn ghost" style={{ flex: '0 0 auto', padding: '10px 18px' }} onClick={addCustomService}>
+                        <IconPlus /> Add
+                      </button>
+                    </div>
+                    {allSelectedServices.length > 0 && (
+                      <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {allSelectedServices.map((svc) => (
+                          <span key={svc} className="service-tag">
+                            {svc}
+                            <button
+                              type="button"
+                              className="remove-tag"
+                              onClick={() => removeServiceTag(svc)}
+                              aria-label="Remove service"
+                            >
+                              <IconX />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1487,7 +1614,7 @@ const SupplierSignupPage = ({ onSuccess, onCancel, onBackToRoleSelect }) => {
                   window.location.hash = 'home';
                 }}
               >
-                <IconArrowLeft /> Back to Home
+                <IconChevronLeft /> Back to Home
               </button>
             </div>
           </div>

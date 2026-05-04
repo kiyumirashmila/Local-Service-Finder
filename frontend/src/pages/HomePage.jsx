@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
 import { useServices } from '../hooks/useServices';
 import Header from '../components/Header';
@@ -270,29 +270,38 @@ const HomePage = () => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  useEffect(() => {
-    const load = async () => {
-      setRecentError('');
-      setRecentLoading(true);
-      try {
-        const [supRes, catRes, promoRes] = await Promise.all([
-          fetchRecentSuppliers('all'),
-          fetchPublicCatalogOptions().catch(() => null),
-          fetchDiscountBanner().catch(() => null)
-        ]);
-        setRecentSuppliers(supRes?.data?.suppliers || []);
-        if (catRes?.data?.categories) {
-          setCatalogCategories(catRes.data.categories);
-        }
-        setPromoBanner(promoRes?.data?.promo || null);
-      } catch (e) {
-        setRecentError(e?.response?.data?.message || 'Failed to load suppliers.');
-      } finally {
-        setRecentLoading(false);
+  const loadRecentSuppliers = useCallback(async () => {
+    setRecentError('');
+    setRecentLoading(true);
+    try {
+      const [supRes, catRes, promoRes] = await Promise.all([
+        fetchRecentSuppliers('all'),
+        fetchPublicCatalogOptions().catch(() => null),
+        fetchDiscountBanner().catch(() => null)
+      ]);
+      setRecentSuppliers(supRes?.data?.suppliers || []);
+      if (catRes?.data?.categories) {
+        setCatalogCategories(catRes.data.categories);
       }
-    };
-    load();
+      setPromoBanner(promoRes?.data?.promo || null);
+    } catch (e) {
+      setRecentError(e?.response?.data?.message || 'Failed to load suppliers.');
+    } finally {
+      setRecentLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadRecentSuppliers();
+  }, [loadRecentSuppliers]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') loadRecentSuppliers();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [loadRecentSuppliers]);
 
   useEffect(() => {
     if (isAuthenticated && user?.role === 'supplier' && route === 'home') {
@@ -333,10 +342,15 @@ const HomePage = () => {
             ? s.services.join(', ')
             : serviceCategory;
 
+        const catalogCategoryLabel =
+          String(s.category || '').trim() ||
+          (s.serviceCategory === 'other' && s.serviceCategoryOther ? String(s.serviceCategoryOther).trim() : '') ||
+          String(serviceCategory || '').trim();
+
         const bookingPayload = {
           supplierId: s.id,
           providerName: s.fullName,
-          category: serviceCategory || 'Local Professional',
+          category: catalogCategoryLabel || serviceCategory || 'Local Professional',
           title: displayServices ? `${displayServices}` : 'Service',
           services: Array.isArray(s.services) ? s.services : [],
           location: s.city || '',

@@ -17,6 +17,11 @@ const serviceSchema = new mongoose.Schema(
       required: [true, "Category is required"],
       trim: true
     },
+    categoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Category",
+      default: null
+    },
     location: {
       type: String,
       required: [true, "Location is required"],
